@@ -229,7 +229,6 @@ Durable execution — shipped (details in [`docs/durable-execution.md`](docs/dur
 
 Not yet:
 
-- [ ] Intel-mac release binary (runner-queued; lands on the next tag)
 - [ ] Rate-limited work queues
 - [ ] `query` of a *running* workflow's live state (today: parked/persisted state)
 - [ ] Exactly-once across *external* systems (only same-DB writes today)

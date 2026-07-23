@@ -197,9 +197,8 @@ emit step_success(seq, name); return result
 **Packaging / ops**
 - [x] self-spawning daemon (tmux/herdr-style), `~/.config/shift-clock`
 - [x] CI (fmt/clippy + build/test on mac+linux)
-- [x] release-tag builds (mac arm64/x86_64, linux arm64/x86_64) → GitHub Release
-- [x] Homebrew tap (`brew install phin-tech/tap/shift-clock`)
-- [ ] Intel-mac release binary in the formula (runner-queued; lands next tag)
+- [x] release-tag builds — mac arm64/x86_64 + linux arm64/x86_64 (Intel mac cross-compiled on Apple Silicon)
+- [x] Homebrew tap covering all four arches (`brew install phin-tech/tap/shift-clock`)
 - [ ] `HOMEBREW_TAP_TOKEN` secret so releases auto-bump the tap
 
 ## Mapping to the current codebase
