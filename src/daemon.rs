@@ -12,21 +12,14 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-fn data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let d = PathBuf::from(home).join(".shift-clock");
-    let _ = std::fs::create_dir_all(&d);
-    d
-}
-
 fn port_of(host: &str) -> String {
     host.rsplit(':').next().unwrap_or("8080").to_string()
 }
 fn pid_file(host: &str) -> PathBuf {
-    data_dir().join(format!("daemon-{}.pid", port_of(host)))
+    crate::paths::pid_file(&port_of(host))
 }
 fn log_file(host: &str) -> PathBuf {
-    data_dir().join(format!("daemon-{}.log", port_of(host)))
+    crate::paths::log_file(&port_of(host))
 }
 
 fn addr_of(host: &str) -> String {

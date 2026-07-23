@@ -33,11 +33,28 @@ Workflows are just commands — a `python` script, a `node` script, or a bare
 
 ## Quick start
 
-```bash
-cargo build
+Everything lives in `~/.config/shift-clock/` (SDKs, `flows.toml`, `flows/`, the
+SQLite DB, pid/log). The binary is self-contained — `init` scaffolds it, and any
+command works from any directory.
 
+```bash
+cargo build && cargo install --path .    # or use ./target/debug/shift-clock
+
+shift-clock init         # scaffold ~/.config/shift-clock (SDKs + a sample manifest)
+shift-clock              # ← bare command: opens the dashboard, auto-spawning the daemon
+shift-clock trigger hello
+shift-clock workflows
+```
+
+Edit `~/.config/shift-clock/flows.toml` to add your own flows; write scripts in
+`~/.config/shift-clock/flows/` and `import shift_clock` (Python) or import the
+bundled `sdk/typescript/shift_clock.mjs` (TS).
+
+### From a project checkout (dev)
+
+```bash
 # One-shot: run a single workflow in-process, no daemon, live-streamed:
-./target/debug/shift-clock run etl        # Python SDK workflow
+./target/debug/shift-clock run etl        # Python SDK workflow (reads ./flows.toml)
 ./target/debug/shift-clock run report     # TypeScript workflow (node type-stripping)
 ./target/debug/shift-clock run hello      # bare shell workflow (exit-code judged)
 ./target/debug/shift-clock run crashy     # crash + resume from the journal

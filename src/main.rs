@@ -7,6 +7,7 @@ mod cli;
 mod client;
 mod config;
 mod daemon;
+mod paths;
 mod protocol;
 mod scheduler;
 mod server;
@@ -21,17 +22,21 @@ use clap::{Parser, Subcommand};
 #[command(name = "shift-clock", version, about = "Local, language-agnostic flow orchestrator")]
 struct Cli {
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Scaffold ~/.config/shift-clock (SDKs + a sample manifest).
+    Init,
     /// Run the daemon: scheduler + worker + HTTP control plane.
     Serve {
-        #[arg(long, default_value = "shift-clock.db")]
-        db: String,
-        #[arg(long, default_value = "flows.toml")]
-        flows: String,
+        /// SQLite path (default: ~/.config/shift-clock/shift-clock.db).
+        #[arg(long)]
+        db: Option<String>,
+        /// Manifest path (default: ~/.config/shift-clock/flows.toml).
+        #[arg(long)]
+        flows: Option<String>,
         #[arg(long, default_value = "127.0.0.1:8080")]
         addr: String,
         /// Foreground: also open the dashboard; quitting it stops the daemon.
@@ -113,25 +118,33 @@ enum Cmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    const DEFAULT_HOST: &str = "127.0.0.1:8080";
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Serve { db, flows, addr, attach } => server::serve(db, flows, addr, attach).await,
-        Cmd::Trigger { name, params, id, host } => {
+        // Bare `shift-clock` → open the dashboard (auto-spawns the daemon).
+        None => tui::run(DEFAULT_HOST).await,
+        Some(Cmd::Init) => {
+            let dir = paths::ensure_scaffold()?;
+            println!("scaffolded {}", dir.display());
+            Ok(())
+        }
+        Some(Cmd::Serve { db, flows, addr, attach }) => server::serve(db, flows, addr, attach).await,
+        Some(Cmd::Trigger { name, params, id, host }) => {
             cli::trigger(&host, &name, cli::parse_params(&params), id).await
         }
-        Cmd::Signal { workflow_id, name, payload, host } => {
+        Some(Cmd::Signal { workflow_id, name, payload, host }) => {
             let payload = serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
             cli::signal(&host, &workflow_id, &name, payload).await
         }
-        Cmd::Show { workflow_id, host } => cli::show(&host, &workflow_id).await,
-        Cmd::Query { workflow_id, key, host } => cli::query(&host, &workflow_id, key).await,
-        Cmd::Status { host } => daemon::status(&host).await,
-        Cmd::Stop { host } => daemon::stop(&host),
-        Cmd::Run { name, flows, params } => {
+        Some(Cmd::Show { workflow_id, host }) => cli::show(&host, &workflow_id).await,
+        Some(Cmd::Query { workflow_id, key, host }) => cli::query(&host, &workflow_id, key).await,
+        Some(Cmd::Status { host }) => daemon::status(&host).await,
+        Some(Cmd::Stop { host }) => daemon::stop(&host),
+        Some(Cmd::Run { name, flows, params }) => {
             cli::run_oneshot(&flows, &name, cli::parse_params(&params)).await
         }
-        Cmd::Workflows { limit, host } => cli::workflows(&host, limit).await,
-        Cmd::Logs { workflow_id, follow, host } => cli::logs(&host, &workflow_id, follow).await,
-        Cmd::Dashboard { host } => tui::run(&host).await,
+        Some(Cmd::Workflows { limit, host }) => cli::workflows(&host, limit).await,
+        Some(Cmd::Logs { workflow_id, follow, host }) => cli::logs(&host, &workflow_id, follow).await,
+        Some(Cmd::Dashboard { host }) => tui::run(&host).await,
     }
 }

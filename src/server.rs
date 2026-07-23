@@ -10,26 +10,41 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
 
-pub async fn serve(db: String, flows: String, addr: String, attach: bool) -> Result<()> {
+pub async fn serve(db: Option<String>, flows: Option<String>, addr: String, attach: bool) -> Result<()> {
     // `--attach` with a daemon already up → just attach the dashboard to it.
     if attach && crate::daemon::is_up(&addr).await {
         println!("[serve] a daemon is already running on {addr}; attaching dashboard");
         return crate::tui::run(&addr).await;
     }
 
+    // Make the config dir self-contained (writes the bundled SDKs + a sample).
+    let _ = crate::paths::ensure_scaffold();
+
+    // Resolve paths: explicit flags win, else the ~/.config/shift-clock defaults.
+    let db = db.unwrap_or_else(|| crate::paths::default_db().display().to_string());
+    let flows_path =
+        flows.unwrap_or_else(|| crate::paths::default_manifest().display().to_string());
+
     crate::daemon::record_self(&addr); // so `shift-clock stop/status` can find us
     let store = Store::open(&db)?;
 
     // The manifest is one writer into the deployments table.
-    let manifest = load_manifest(&flows)?;
+    let manifest = load_manifest(&flows_path)?;
     for dep in &manifest.flows {
         store.upsert_deployment(dep)?;
     }
-    println!("[serve] loaded {} flow(s) from {flows}", manifest.flows.len());
+    println!("[serve] loaded {} flow(s) from {flows_path}", manifest.flows.len());
+
+    // Flows resolve relative to the manifest's directory (so `flows/x.py` and the
+    // sibling `sdk/` work wherever the manifest lives — not tied to the cwd).
+    let root = PathBuf::from(&flows_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let root: PathBuf = std::fs::canonicalize(&root).unwrap_or(root);
 
     let (tx, _rx) = broadcast::channel::<Envelope>(4096);
-    let root = std::env::current_dir()?;
-    let root: PathBuf = std::fs::canonicalize(&root).unwrap_or(root);
     let worker = Worker::new(store.clone(), tx, root);
 
     // Durable recovery: resume any workflow left running by a previous daemon.
