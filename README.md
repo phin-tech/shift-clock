@@ -48,8 +48,9 @@ cargo build
 ./target/debug/shift-clock status          # RUNNING, pid, log path
 ./target/debug/shift-clock stop            # SIGTERM via pidfile
 
-# …or run the daemon in the foreground:
-./target/debug/shift-clock serve
+# …or run it in the FOREGROUND (attached to your terminal, Ctrl-C to stop):
+./target/debug/shift-clock serve             # headless: streams scheduler/serve logs
+./target/debug/shift-clock serve --attach    # daemon + dashboard in one process; q stops it
 
 # …or, if you want it started at LOGIN and kept alive by the OS (macOS launchd):
 ./deploy/install.sh

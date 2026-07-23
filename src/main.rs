@@ -34,6 +34,9 @@ enum Cmd {
         flows: String,
         #[arg(long, default_value = "127.0.0.1:8080")]
         addr: String,
+        /// Foreground: also open the dashboard; quitting it stops the daemon.
+        #[arg(long)]
+        attach: bool,
     },
     /// Trigger a flow on a running daemon.
     Trigger {
@@ -112,7 +115,7 @@ enum Cmd {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Serve { db, flows, addr } => server::serve(db, flows, addr).await,
+        Cmd::Serve { db, flows, addr, attach } => server::serve(db, flows, addr, attach).await,
         Cmd::Trigger { name, params, id, host } => {
             cli::trigger(&host, &name, cli::parse_params(&params), id).await
         }

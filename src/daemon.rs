@@ -40,6 +40,11 @@ pub fn is_local(host: &str) -> bool {
     matches!(hostname, "127.0.0.1" | "localhost" | "::1" | "0.0.0.0" | "")
 }
 
+/// Is a daemon reachable at `host`?
+pub async fn is_up(host: &str) -> bool {
+    health_ok(host).await
+}
+
 async fn health_ok(host: &str) -> bool {
     let url = format!("http://{}/health", addr_of(host));
     let client = match reqwest::Client::builder().timeout(Duration::from_millis(600)).build() {
