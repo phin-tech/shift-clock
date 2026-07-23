@@ -23,6 +23,7 @@ enum Tab {
 }
 
 pub async fn run(host: &str) -> Result<()> {
+    crate::daemon::ensure(host).await?; // Herdr-style: bring up a local daemon if none is running
     let client = Client::new(host);
 
     enable_raw_mode()?;

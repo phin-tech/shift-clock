@@ -6,6 +6,7 @@ mod api;
 mod cli;
 mod client;
 mod config;
+mod daemon;
 mod protocol;
 mod scheduler;
 mod server;
@@ -67,6 +68,16 @@ enum Cmd {
         #[arg(long, default_value = "127.0.0.1:8080")]
         host: String,
     },
+    /// Show whether the background daemon is running.
+    Status {
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        host: String,
+    },
+    /// Stop the background daemon.
+    Stop {
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        host: String,
+    },
     /// Run one flow once, in-process, with no daemon (live-streamed).
     Run {
         name: String,
@@ -111,6 +122,8 @@ async fn main() -> Result<()> {
         }
         Cmd::Show { workflow_id, host } => cli::show(&host, &workflow_id).await,
         Cmd::Query { workflow_id, key, host } => cli::query(&host, &workflow_id, key).await,
+        Cmd::Status { host } => daemon::status(&host).await,
+        Cmd::Stop { host } => daemon::stop(&host),
         Cmd::Run { name, flows, params } => {
             cli::run_oneshot(&flows, &name, cli::parse_params(&params)).await
         }

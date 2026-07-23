@@ -24,6 +24,7 @@ pub fn parse_params(pairs: &[String]) -> Value {
 }
 
 pub async fn trigger(host: &str, name: &str, params: Value, id: Option<String>) -> Result<()> {
+    crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     let workflow_id = client.trigger(name, params, id.as_deref()).await?;
     println!("triggered {name} -> {workflow_id}");
@@ -32,6 +33,7 @@ pub async fn trigger(host: &str, name: &str, params: Value, id: Option<String>) 
 }
 
 pub async fn signal(host: &str, id: &str, name: &str, payload: Value) -> Result<()> {
+    crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     client.signal(id, name, payload).await?;
     println!("signalled {id} <- {name}");
@@ -39,6 +41,7 @@ pub async fn signal(host: &str, id: &str, name: &str, payload: Value) -> Result<
 }
 
 pub async fn query(host: &str, id: &str, key: Option<String>) -> Result<()> {
+    crate::daemon::ensure(host).await?;
     let state = Client::new(host).query(id).await?;
     match key {
         Some(k) => println!(
@@ -51,6 +54,7 @@ pub async fn query(host: &str, id: &str, key: Option<String>) -> Result<()> {
 }
 
 pub async fn show(host: &str, id: &str) -> Result<()> {
+    crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     let d = client.get_workflow(id).await?;
     let w = &d["workflow"];
@@ -86,6 +90,7 @@ pub async fn show(host: &str, id: &str) -> Result<()> {
 }
 
 pub async fn workflows(host: &str, limit: i64) -> Result<()> {
+    crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     let workflows = client.list_workflows(limit).await?;
     println!("{:<12} {:<18} {:<9} {:<8} {:<4} {}", "ID", "FLOW", "STATUS", "TRIGGER", "ATT", "CREATED");
@@ -104,6 +109,7 @@ pub async fn workflows(host: &str, limit: i64) -> Result<()> {
 }
 
 pub async fn logs(host: &str, id: &str, follow: bool) -> Result<()> {
+    crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     if follow {
         client.stream(id, |env| println!("{}", format_envelope(&env))).await?;

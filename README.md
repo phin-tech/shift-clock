@@ -42,12 +42,17 @@ cargo build
 ./target/debug/shift-clock run hello      # bare shell workflow (exit-code judged)
 ./target/debug/shift-clock run crashy     # crash + resume from the journal
 
-# Run as a background service (macOS launchd — starts at login, restarts on crash)
-./deploy/install.sh
-# then just point clients at it:  shift-clock dashboard | workflows | trigger …
+# No setup needed — the FIRST client command auto-spawns a detached background
+# daemon (tmux/herdr-style: setsid + stdio→/dev/null), then reuses it:
+./target/debug/shift-clock trigger etl     # ← spawns the daemon if none is running
+./target/debug/shift-clock status          # RUNNING, pid, log path
+./target/debug/shift-clock stop            # SIGTERM via pidfile
 
 # …or run the daemon in the foreground:
 ./target/debug/shift-clock serve
+
+# …or, if you want it started at LOGIN and kept alive by the OS (macOS launchd):
+./deploy/install.sh
 # …in another terminal:
 ./target/debug/shift-clock trigger etl
 ./target/debug/shift-clock trigger etl --id nightly-2026-07-23   # idempotent submit
@@ -174,6 +179,7 @@ exit code, stdout/stderr captured as logs.
 | Scheduling | 5-field cron, `overlap=skip`, `catchup=none`. |
 | SDK stance | **Optional.** A workflow is minimally just a command judged by exit code. |
 | Observability | **TUI dashboard** (Runs + Scheduled tabs) + CLI, both HTTP/SSE clients. |
+| Daemon lifecycle | **Self-spawning** (tmux/herdr-style): a client `setsid`-forks a detached `serve` if none is reachable. Transport stays HTTP (remote-ready) — the Unix socket Herdr needs is only for PTY FD-passing, which we don't do. |
 
 ## Known limitations (see the design doc)
 

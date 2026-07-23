@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use tokio::sync::broadcast;
 
 pub async fn serve(db: String, flows: String, addr: String) -> Result<()> {
+    crate::daemon::record_self(&addr); // so `shift-clock stop/status` can find us
     let store = Store::open(&db)?;
 
     // The manifest is one writer into the deployments table.

@@ -25,5 +25,8 @@ ratatui = "0.28"
 crossterm = "0.28"
 anyhow = "1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.dev]
 opt-level = 0
