@@ -230,7 +230,11 @@ impl Store {
     /// signal arrives, if wake_at is None → status 'waiting').
     pub fn park_workflow(&self, id: &str, wake_at: Option<f64>) -> Result<()> {
         let c = self.conn.lock().unwrap();
-        let status = if wake_at.is_some() { "sleeping" } else { "waiting" };
+        let status = if wake_at.is_some() {
+            "sleeping"
+        } else {
+            "waiting"
+        };
         c.execute(
             "UPDATE workflows SET status=?2, wake_at=?3, updated_at=?4 WHERE id=?1",
             params![id, status, wake_at, now_iso()],
@@ -273,7 +277,13 @@ impl Store {
         )?)
     }
 
-    pub fn finish_workflow(&self, id: &str, status: &str, output: Option<&Value>, error: Option<&str>) -> Result<()> {
+    pub fn finish_workflow(
+        &self,
+        id: &str,
+        status: &str,
+        output: Option<&Value>,
+        error: Option<&str>,
+    ) -> Result<()> {
         let c = self.conn.lock().unwrap();
         let now = now_iso();
         c.execute(
@@ -379,6 +389,7 @@ impl Store {
 
     // -- step journal (authoritative for resume) ----------------------------
 
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_step(
         &self,
         workflow_id: &str,
@@ -391,7 +402,11 @@ impl Store {
     ) -> Result<()> {
         let c = self.conn.lock().unwrap();
         let now = now_iso();
-        let finished = if status == "started" { None } else { Some(now.clone()) };
+        let finished = if status == "started" {
+            None
+        } else {
+            Some(now.clone())
+        };
         c.execute(
             "INSERT INTO workflow_steps(workflow_id,step_seq,step_name,status,output,error,duration_ms,started_at,finished_at)
              VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
@@ -410,6 +425,7 @@ impl Store {
     /// (DBOS-style exactly-once for writes to the workflow's own store). Either
     /// both land or neither does — so a crash before commit re-runs the step
     /// cleanly, and a crash after commit skips it on resume.
+    #[allow(clippy::too_many_arguments)]
     pub fn commit_step_tx(
         &self,
         workflow_id: &str,
@@ -441,7 +457,10 @@ impl Store {
     }
 
     /// A workflow's published durable state (for get_state and query).
-    pub fn get_state(&self, workflow_id: &str) -> Result<std::collections::BTreeMap<String, Value>> {
+    pub fn get_state(
+        &self,
+        workflow_id: &str,
+    ) -> Result<std::collections::BTreeMap<String, Value>> {
         let c = self.conn.lock().unwrap();
         let mut stmt = c.prepare("SELECT key,value FROM kv WHERE workflow_id=?1 ORDER BY key")?;
         let rows = stmt.query_map(params![workflow_id], |r| {
@@ -460,9 +479,8 @@ impl Store {
     /// The resume journal: seq -> {status, output} for all recorded steps.
     pub fn get_journal(&self, workflow_id: &str) -> Result<HashMap<u32, StepRecord>> {
         let c = self.conn.lock().unwrap();
-        let mut stmt = c.prepare(
-            "SELECT step_seq,status,output FROM workflow_steps WHERE workflow_id=?1",
-        )?;
+        let mut stmt =
+            c.prepare("SELECT step_seq,status,output FROM workflow_steps WHERE workflow_id=?1")?;
         let rows = stmt.query_map(params![workflow_id], |r| {
             let seq: i64 = r.get(0)?;
             let status: String = r.get(1)?;
@@ -509,7 +527,12 @@ impl Store {
 
     // -- events / logs (observability) --------------------------------------
 
-    pub fn record_event(&self, workflow_id: &str, etype: &str, payload: &Value) -> Result<(i64, String)> {
+    pub fn record_event(
+        &self,
+        workflow_id: &str,
+        etype: &str,
+        payload: &Value,
+    ) -> Result<(i64, String)> {
         let c = self.conn.lock().unwrap();
         let ts = now_iso();
         c.execute(
@@ -531,7 +554,8 @@ impl Store {
 
     pub fn get_logs(&self, workflow_id: &str) -> Result<Vec<LogLine>> {
         let c = self.conn.lock().unwrap();
-        let mut stmt = c.prepare("SELECT ts,stream,line FROM logs WHERE workflow_id=?1 ORDER BY id")?;
+        let mut stmt =
+            c.prepare("SELECT ts,stream,line FROM logs WHERE workflow_id=?1 ORDER BY id")?;
         let rows = stmt.query_map(params![workflow_id], |r| {
             Ok(LogLine {
                 ts: r.get(0)?,
@@ -548,7 +572,8 @@ impl Store {
 
     pub fn get_events(&self, workflow_id: &str) -> Result<Vec<(i64, String, String, Value)>> {
         let c = self.conn.lock().unwrap();
-        let mut stmt = c.prepare("SELECT id,ts,type,payload FROM events WHERE workflow_id=?1 ORDER BY id")?;
+        let mut stmt =
+            c.prepare("SELECT id,ts,type,payload FROM events WHERE workflow_id=?1 ORDER BY id")?;
         let rows = stmt.query_map(params![workflow_id], |r| {
             let payload: String = r.get(3)?;
             Ok((

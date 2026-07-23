@@ -72,7 +72,9 @@ async fn trigger_flow(
         .store
         .get_deployment(&name)?
         .ok_or_else(|| ApiError::not_found(format!("no such flow '{name}'")))?;
-    let (extra, id) = body.map(|b| (b.0.params, b.0.id)).unwrap_or((Value::Null, None));
+    let (extra, id) = body
+        .map(|b| (b.0.params, b.0.id))
+        .unwrap_or((Value::Null, None));
     let workflow_id = s
         .worker
         .trigger(dep, "manual", extra, id)
@@ -157,7 +159,13 @@ async fn stream_workflow(
     let mut backlog: Vec<Envelope> = Vec::new();
     if let Ok(events) = s.store.get_events(&id) {
         for (seq, ts, _ty, payload) in events {
-            backlog.push(Envelope { workflow_id: id.clone(), seq, ts, kind: "event".into(), payload });
+            backlog.push(Envelope {
+                workflow_id: id.clone(),
+                seq,
+                ts,
+                kind: "event".into(),
+                payload,
+            });
         }
     }
     if let Ok(logs) = s.store.get_logs(&id) {
@@ -186,7 +194,9 @@ async fn stream_workflow(
     });
 
     let combined = stream::iter(backlog).chain(live).map(|env| {
-        Ok(Event::default().json_data(&env).unwrap_or_else(|_| Event::default().data("{}")))
+        Ok(Event::default()
+            .json_data(&env)
+            .unwrap_or_else(|_| Event::default().data("{}")))
     });
 
     Sse::new(combined)
@@ -200,15 +210,24 @@ pub struct ApiError {
 }
 impl ApiError {
     fn not_found(msg: String) -> Self {
-        ApiError { code: StatusCode::NOT_FOUND, msg }
+        ApiError {
+            code: StatusCode::NOT_FOUND,
+            msg,
+        }
     }
     fn conflict(msg: String) -> Self {
-        ApiError { code: StatusCode::CONFLICT, msg }
+        ApiError {
+            code: StatusCode::CONFLICT,
+            msg,
+        }
     }
 }
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        ApiError { code: StatusCode::INTERNAL_SERVER_ERROR, msg: e.to_string() }
+        ApiError {
+            code: StatusCode::INTERNAL_SERVER_ERROR,
+            msg: e.to_string(),
+        }
     }
 }
 impl axum::response::IntoResponse for ApiError {

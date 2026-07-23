@@ -34,7 +34,9 @@ pub async fn run(worker: Worker) {
             if !dep.enabled {
                 continue;
             }
-            let Some(expr) = dep.cron.clone() else { continue };
+            let Some(expr) = dep.cron.clone() else {
+                continue;
+            };
             let cron = match Cron::parse(&expr) {
                 Ok(c) => c,
                 Err(e) => {

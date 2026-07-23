@@ -51,7 +51,10 @@ fn version_of(cmd: &[String]) -> String {
 }
 
 fn now_epoch() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
 }
 
 impl Worker {
@@ -85,22 +88,31 @@ impl Worker {
         }
         // Concurrency limit.
         if dep.concurrency > 0 && self.store.count_running(&dep.name)? >= dep.concurrency as i64 {
-            anyhow::bail!("concurrency limit {} reached for '{}'", dep.concurrency, dep.name);
+            anyhow::bail!(
+                "concurrency limit {} reached for '{}'",
+                dep.concurrency,
+                dep.name
+            );
         }
         // Overlap = skip.
         {
             let mut active = self.active.lock().unwrap();
             if dep.overlap == "skip" && active.contains(&dep.name) {
-                anyhow::bail!("overlap=skip: '{}' already has an active workflow", dep.name);
+                anyhow::bail!(
+                    "overlap=skip: '{}' already has an active workflow",
+                    dep.name
+                );
             }
             active.insert(dep.name.clone());
         }
         let mut input = Value::Object(dep.params.clone());
         merge(&mut input, extra_input);
 
-        let workflow_id = id.unwrap_or_else(|| format!("w-{}", &Uuid::new_v4().simple().to_string()[..8]));
+        let workflow_id =
+            id.unwrap_or_else(|| format!("w-{}", &Uuid::new_v4().simple().to_string()[..8]));
         let version = version_of(&dep.cmd);
-        self.store.create_workflow(&workflow_id, &dep.name, trigger, &input, &version)?;
+        self.store
+            .create_workflow(&workflow_id, &dep.name, trigger, &input, &version)?;
         self.spawn_supervise(dep, workflow_id.clone(), input);
         Ok(workflow_id)
     }
@@ -118,13 +130,17 @@ impl Worker {
     /// signal arrival). Shared with recovery.
     fn resume(&self, wf: &Workflow, event: &str) {
         let Some(dep) = self.store.get_deployment(&wf.deployment).ok().flatten() else {
-            let _ = self.store.finish_workflow(&wf.id, "failed", None, Some("deployment removed"));
+            let _ = self
+                .store
+                .finish_workflow(&wf.id, "failed", None, Some("deployment removed"));
             return;
         };
         // Version guard: refuse to resume against changed code.
         if !wf.version.is_empty() && version_of(&dep.cmd) != wf.version {
             let _ = self.store.finish_workflow(
-                &wf.id, "failed", None,
+                &wf.id,
+                "failed",
+                None,
                 Some("version mismatch: deployment command changed since submission"),
             );
             return;
@@ -132,7 +148,10 @@ impl Worker {
         self.active.lock().unwrap().insert(dep.name.clone());
         let _ = self.store.set_running(&wf.id);
         let payload = json!({ "type": event });
-        let (seq, ts) = self.store.record_event(&wf.id, event, &payload).unwrap_or((0, now_iso()));
+        let (seq, ts) = self
+            .store
+            .record_event(&wf.id, event, &payload)
+            .unwrap_or((0, now_iso()));
         self.broadcast(&wf.id, seq, ts, "event", payload);
         self.spawn_supervise(dep, wf.id.clone(), wf.input.clone());
     }
@@ -151,7 +170,9 @@ impl Worker {
     /// A signal arrived — if the workflow is parked waiting, wake it now.
     pub fn notify_signal(&self, workflow_id: &str) {
         if let Ok(Some(wf)) = self.store.get_workflow(workflow_id) {
-            if (wf.status == "waiting" || wf.status == "sleeping") && !self.is_active(&wf.deployment) {
+            if (wf.status == "waiting" || wf.status == "sleeping")
+                && !self.is_active(&wf.deployment)
+            {
                 self.resume(&wf, "workflow_signalled");
             }
         }
@@ -162,7 +183,9 @@ impl Worker {
         tokio::spawn(async move {
             let name = dep.name.clone();
             if let Err(e) = this.supervise(dep, workflow_id.clone(), input).await {
-                let _ = this.store.finish_workflow(&workflow_id, "failed", None, Some(&e.to_string()));
+                let _ =
+                    this.store
+                        .finish_workflow(&workflow_id, "failed", None, Some(&e.to_string()));
                 eprintln!("[worker] workflow {workflow_id} errored: {e:#}");
             }
             this.active.lock().unwrap().remove(&name);
@@ -173,15 +196,23 @@ impl Worker {
         loop {
             let journal = self.store.get_journal(&workflow_id)?;
             let signals = self.store.unconsumed_signals(&workflow_id)?;
-            let res = self.execute_once(&dep, &workflow_id, &input, journal, signals).await?;
+            let res = self
+                .execute_once(&dep, &workflow_id, &input, journal, signals)
+                .await?;
 
             match res.terminal {
                 Some(Terminal::Success) => {
-                    self.store.finish_workflow(&workflow_id, "success", None, None)?;
+                    self.store
+                        .finish_workflow(&workflow_id, "success", None, None)?;
                     return Ok(());
                 }
                 Some(Terminal::Failure) => {
-                    self.store.finish_workflow(&workflow_id, "failed", None, Some("workflow reported failure"))?;
+                    self.store.finish_workflow(
+                        &workflow_id,
+                        "failed",
+                        None,
+                        Some("workflow reported failure"),
+                    )?;
                     return Ok(());
                 }
                 Some(Terminal::Parked(wake_at)) => {
@@ -191,19 +222,27 @@ impl Worker {
                 }
                 None => {
                     if res.exit_ok {
-                        self.store.finish_workflow(&workflow_id, "success", None, None)?;
+                        self.store
+                            .finish_workflow(&workflow_id, "success", None, None)?;
                         return Ok(());
                     }
                     // Crash: re-dispatch up to `retries`.
-                    let attempts = self.store.get_workflow(&workflow_id)?.map(|w| w.attempts).unwrap_or(0);
+                    let attempts = self
+                        .store
+                        .get_workflow(&workflow_id)?
+                        .map(|w| w.attempts)
+                        .unwrap_or(0);
                     if (attempts as u32) < dep.retries {
                         self.store.mark_attempt(&workflow_id)?;
                         let payload = json!({ "type": "workflow_resume", "attempt": attempts + 1 });
-                        let (seq, ts) = self.store.record_event(&workflow_id, "workflow_resume", &payload)?;
+                        let (seq, ts) =
+                            self.store
+                                .record_event(&workflow_id, "workflow_resume", &payload)?;
                         self.broadcast(&workflow_id, seq, ts, "event", payload);
                         continue;
                     }
-                    self.store.finish_workflow(&workflow_id, "failed", None, Some("crashed"))?;
+                    self.store
+                        .finish_workflow(&workflow_id, "failed", None, Some("crashed"))?;
                     return Ok(());
                 }
             }
@@ -218,12 +257,19 @@ impl Worker {
         journal: std::collections::HashMap<u32, crate::store::StepRecord>,
         signals: Vec<(String, Value)>,
     ) -> Result<ExecResult> {
-        let sock_dir = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
+        let sock_dir = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
         let sock_path = sock_dir.join(format!("sc-{workflow_id}.sock"));
         let _ = std::fs::remove_file(&sock_path);
         let listener = UnixListener::bind(&sock_path)?;
 
-        let (prog, args) = dep.cmd.split_first().ok_or_else(|| anyhow::anyhow!("empty cmd"))?;
+        let (prog, args) = dep
+            .cmd
+            .split_first()
+            .ok_or_else(|| anyhow::anyhow!("empty cmd"))?;
         let mut cmd = tokio::process::Command::new(prog);
         cmd.args(args)
             .current_dir(&self.root)
@@ -265,7 +311,12 @@ impl Worker {
                 .into_iter()
                 .map(|(name, payload)| SignalDelivery { name, payload })
                 .collect(),
-            state: self.store.get_state(workflow_id).unwrap_or_default().into_iter().collect(),
+            state: self
+                .store
+                .get_state(workflow_id)
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
         };
 
         let mut wait = Box::pin(child.wait());
@@ -291,7 +342,12 @@ impl Worker {
         Ok(ExecResult { terminal, exit_ok })
     }
 
-    async fn handle_conn(&self, workflow_id: &str, stream: UnixStream, ctx: Context) -> Option<Terminal> {
+    async fn handle_conn(
+        &self,
+        workflow_id: &str,
+        stream: UnixStream,
+        ctx: Context,
+    ) -> Option<Terminal> {
         let (rd, mut wr) = stream.into_split();
         let ctx_line = format!("{}\n", serde_json::to_string(&ctx).unwrap());
         if wr.write_all(ctx_line.as_bytes()).await.is_err() {
@@ -315,21 +371,37 @@ impl Worker {
 
             // Durable RPCs (journal + ack before the workflow proceeds).
             match &msg {
-                FlowMsg::StepResult { seq, name, duration_ms, output, writes } => {
+                FlowMsg::StepResult {
+                    seq,
+                    name,
+                    duration_ms,
+                    output,
+                    writes,
+                } => {
                     if writes.is_empty() {
                         self.journal_step(workflow_id, *seq, name, output, *duration_ms);
                     } else {
                         // Exactly-once: journal row + KV writes in one transaction.
-                        let w: Vec<(String, Value)> =
-                            writes.iter().map(|k| (k.key.clone(), k.value.clone())).collect();
+                        let w: Vec<(String, Value)> = writes
+                            .iter()
+                            .map(|k| (k.key.clone(), k.value.clone()))
+                            .collect();
                         let _ = self.store.commit_step_tx(
-                            workflow_id, *seq as i64, name, output, *duration_ms as i64, &w,
+                            workflow_id,
+                            *seq as i64,
+                            name,
+                            output,
+                            *duration_ms as i64,
+                            &w,
                         );
                         let payload = json!({
                             "type": "step_success", "seq": seq, "task": name,
                             "duration_ms": duration_ms, "writes": writes.len()
                         });
-                        let (s, ts) = self.store.record_event(workflow_id, "step_success", &payload).unwrap_or((0, now_iso()));
+                        let (s, ts) = self
+                            .store
+                            .record_event(workflow_id, "step_success", &payload)
+                            .unwrap_or((0, now_iso()));
                         self.broadcast(workflow_id, s, ts, "event", payload);
                     }
                     if self.ack(&mut wr, *seq).await.is_err() {
@@ -347,7 +419,10 @@ impl Worker {
                 }
                 FlowMsg::WorkflowPark { wake_at } => {
                     let payload = json!({ "type": "workflow_park", "wake_at": wake_at });
-                    let (s, ts) = self.store.record_event(workflow_id, "workflow_park", &payload).unwrap_or((0, now_iso()));
+                    let (s, ts) = self
+                        .store
+                        .record_event(workflow_id, "workflow_park", &payload)
+                        .unwrap_or((0, now_iso()));
                     self.broadcast(workflow_id, s, ts, "event", payload);
                     terminal = Some(Terminal::Parked(*wake_at));
                     continue;
@@ -362,17 +437,41 @@ impl Worker {
         terminal
     }
 
-    fn journal_step(&self, workflow_id: &str, seq: u32, name: &str, output: &Value, duration_ms: u64) {
+    fn journal_step(
+        &self,
+        workflow_id: &str,
+        seq: u32,
+        name: &str,
+        output: &Value,
+        duration_ms: u64,
+    ) {
         let _ = self.store.upsert_step(
-            workflow_id, seq as i64, name, "success", Some(output), None, Some(duration_ms as i64),
+            workflow_id,
+            seq as i64,
+            name,
+            "success",
+            Some(output),
+            None,
+            Some(duration_ms as i64),
         );
-        let payload = json!({ "type": "step_success", "seq": seq, "task": name, "duration_ms": duration_ms });
-        let (s, ts) = self.store.record_event(workflow_id, "step_success", &payload).unwrap_or((0, now_iso()));
+        let payload =
+            json!({ "type": "step_success", "seq": seq, "task": name, "duration_ms": duration_ms });
+        let (s, ts) = self
+            .store
+            .record_event(workflow_id, "step_success", &payload)
+            .unwrap_or((0, now_iso()));
         self.broadcast(workflow_id, s, ts, "event", payload);
     }
 
-    async fn ack(&self, wr: &mut tokio::net::unix::OwnedWriteHalf, seq: u32) -> std::io::Result<()> {
-        let ack = Ack { kind: "ack".into(), seq };
+    async fn ack(
+        &self,
+        wr: &mut tokio::net::unix::OwnedWriteHalf,
+        seq: u32,
+    ) -> std::io::Result<()> {
+        let ack = Ack {
+            kind: "ack".into(),
+            seq,
+        };
         let line = format!("{}\n", serde_json::to_string(&ack).unwrap());
         wr.write_all(line.as_bytes()).await?;
         wr.flush().await
@@ -380,24 +479,58 @@ impl Worker {
 
     fn apply_msg(&self, workflow_id: &str, msg: &FlowMsg) -> Option<Terminal> {
         let payload = serde_json::to_value(msg).unwrap_or(Value::Null);
-        let etype = payload.get("type").and_then(|v| v.as_str()).unwrap_or("event").to_string();
+        let etype = payload
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("event")
+            .to_string();
 
         match msg {
             FlowMsg::StepStart { seq, name, .. } => {
-                let _ = self.store.upsert_step(workflow_id, *seq as i64, name, "started", None, None, None);
+                let _ = self.store.upsert_step(
+                    workflow_id,
+                    *seq as i64,
+                    name,
+                    "started",
+                    None,
+                    None,
+                    None,
+                );
             }
             FlowMsg::StepSkipped { seq, name, .. } => {
-                let _ = self.store.upsert_step(workflow_id, *seq as i64, name, "skipped", None, None, Some(0));
-            }
-            FlowMsg::StepFailure { seq, name, duration_ms, error } => {
                 let _ = self.store.upsert_step(
-                    workflow_id, *seq as i64, name, "failed", None, Some(error), Some(*duration_ms as i64),
+                    workflow_id,
+                    *seq as i64,
+                    name,
+                    "skipped",
+                    None,
+                    None,
+                    Some(0),
+                );
+            }
+            FlowMsg::StepFailure {
+                seq,
+                name,
+                duration_ms,
+                error,
+            } => {
+                let _ = self.store.upsert_step(
+                    workflow_id,
+                    *seq as i64,
+                    name,
+                    "failed",
+                    None,
+                    Some(error),
+                    Some(*duration_ms as i64),
                 );
             }
             _ => {}
         }
 
-        let (seq, ts) = self.store.record_event(workflow_id, &etype, &payload).unwrap_or((0, now_iso()));
+        let (seq, ts) = self
+            .store
+            .record_event(workflow_id, &etype, &payload)
+            .unwrap_or((0, now_iso()));
         self.broadcast(workflow_id, seq, ts, "event", payload);
 
         match msg {
@@ -421,8 +554,17 @@ impl Worker {
     }
 
     fn emit_log(&self, workflow_id: &str, stream: &str, line: &str) {
-        let (seq, ts) = self.store.record_log(workflow_id, stream, line).unwrap_or((0, now_iso()));
-        self.broadcast(workflow_id, seq, ts, "log", json!({ "stream": stream, "line": line }));
+        let (seq, ts) = self
+            .store
+            .record_log(workflow_id, stream, line)
+            .unwrap_or((0, now_iso()));
+        self.broadcast(
+            workflow_id,
+            seq,
+            ts,
+            "log",
+            json!({ "stream": stream, "line": line }),
+        );
     }
 
     fn broadcast(&self, workflow_id: &str, seq: i64, ts: String, kind: &str, payload: Value) {

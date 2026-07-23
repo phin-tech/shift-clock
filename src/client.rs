@@ -20,7 +20,10 @@ impl Client {
         } else {
             format!("http://{}", host.trim_end_matches('/'))
         };
-        Client { base, http: reqwest::Client::new() }
+        Client {
+            base,
+            http: reqwest::Client::new(),
+        }
     }
 
     pub async fn trigger(&self, name: &str, params: Value, id: Option<&str>) -> Result<String> {
@@ -35,7 +38,9 @@ impl Client {
         if !status.is_success() {
             return Err(anyhow!(
                 "{}",
-                body.get("error").and_then(|v| v.as_str()).unwrap_or("trigger failed")
+                body.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("trigger failed")
             ));
         }
         Ok(body["workflow_id"].as_str().unwrap_or_default().to_string())
@@ -43,12 +48,19 @@ impl Client {
 
     pub async fn signal(&self, id: &str, name: &str, payload: Value) -> Result<()> {
         let url = format!("{}/workflows/{}/signals", self.base, id);
-        let resp = self.http.post(&url).json(&json!({ "name": name, "payload": payload })).send().await?;
+        let resp = self
+            .http
+            .post(&url)
+            .json(&json!({ "name": name, "payload": payload }))
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             return Err(anyhow!(
                 "{}",
-                body.get("error").and_then(|v| v.as_str()).unwrap_or("signal failed")
+                body.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("signal failed")
             ));
         }
         Ok(())
@@ -84,7 +96,9 @@ impl Client {
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             return Err(anyhow!(
                 "{}",
-                body.get("error").and_then(|v| v.as_str()).unwrap_or("query failed")
+                body.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("query failed")
             ));
         }
         let body: Value = resp.json().await?;

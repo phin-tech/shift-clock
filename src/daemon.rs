@@ -23,7 +23,10 @@ fn log_file(host: &str) -> PathBuf {
 }
 
 fn addr_of(host: &str) -> String {
-    host.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/').to_string()
+    host.trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// Only local daemons can be auto-spawned; a remote host must already be up.
@@ -40,7 +43,10 @@ pub async fn is_up(host: &str) -> bool {
 
 async fn health_ok(host: &str) -> bool {
     let url = format!("http://{}/health", addr_of(host));
-    let client = match reqwest::Client::builder().timeout(Duration::from_millis(600)).build() {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(600))
+        .build()
+    {
         Ok(c) => c,
         Err(_) => return false,
     };
@@ -61,16 +67,25 @@ pub async fn ensure(host: &str) -> Result<()> {
     for _ in 0..40 {
         tokio::time::sleep(Duration::from_millis(250)).await;
         if health_ok(host).await {
-            eprintln!("[shift-clock] started background daemon on {}", addr_of(host));
+            eprintln!(
+                "[shift-clock] started background daemon on {}",
+                addr_of(host)
+            );
             return Ok(());
         }
     }
-    Err(anyhow!("daemon did not become ready; see {}", log_file(host).display()))
+    Err(anyhow!(
+        "daemon did not become ready; see {}",
+        log_file(host).display()
+    ))
 }
 
 fn spawn_detached(host: &str) -> Result<()> {
     let exe = std::env::current_exe()?;
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(log_file(host))?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file(host))?;
     let log2 = log.try_clone()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("serve")
@@ -102,7 +117,11 @@ pub fn record_self(host: &str) {
 
 pub async fn status(host: &str) -> Result<()> {
     let up = health_ok(host).await;
-    println!("daemon @ {}: {}", addr_of(host), if up { "RUNNING" } else { "not running" });
+    println!(
+        "daemon @ {}: {}",
+        addr_of(host),
+        if up { "RUNNING" } else { "not running" }
+    );
     if let Ok(pid) = std::fs::read_to_string(pid_file(host)) {
         println!("  pid: {}", pid.trim());
     }

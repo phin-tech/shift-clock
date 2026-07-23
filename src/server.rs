@@ -10,7 +10,12 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
 
-pub async fn serve(db: Option<String>, flows: Option<String>, addr: String, attach: bool) -> Result<()> {
+pub async fn serve(
+    db: Option<String>,
+    flows: Option<String>,
+    addr: String,
+    attach: bool,
+) -> Result<()> {
     // `--attach` with a daemon already up → just attach the dashboard to it.
     if attach && crate::daemon::is_up(&addr).await {
         println!("[serve] a daemon is already running on {addr}; attaching dashboard");
@@ -33,7 +38,10 @@ pub async fn serve(db: Option<String>, flows: Option<String>, addr: String, atta
     for dep in &manifest.flows {
         store.upsert_deployment(dep)?;
     }
-    println!("[serve] loaded {} flow(s) from {flows_path}", manifest.flows.len());
+    println!(
+        "[serve] loaded {} flow(s) from {flows_path}",
+        manifest.flows.len()
+    );
 
     // Flows resolve relative to the manifest's directory (so `flows/x.py` and the
     // sibling `sdk/` work wherever the manifest lives — not tied to the cwd).

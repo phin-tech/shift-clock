@@ -59,8 +59,8 @@ pub struct Manifest {
 }
 
 pub fn load_manifest(path: &str) -> Result<Manifest> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("reading manifest {path}: {e}"))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| anyhow!("reading manifest {path}: {e}"))?;
     let m: Manifest = toml::from_str(&text)?;
     Ok(m)
 }
@@ -152,11 +152,15 @@ impl Field {
                 (min, max)
             } else if let Some((a, b)) = range.split_once('-') {
                 (
-                    a.parse::<u32>().map_err(|_| anyhow!("bad range '{range}'"))?,
-                    b.parse::<u32>().map_err(|_| anyhow!("bad range '{range}'"))?,
+                    a.parse::<u32>()
+                        .map_err(|_| anyhow!("bad range '{range}'"))?,
+                    b.parse::<u32>()
+                        .map_err(|_| anyhow!("bad range '{range}'"))?,
                 )
             } else {
-                let v = range.parse::<u32>().map_err(|_| anyhow!("bad value '{range}'"))?;
+                let v = range
+                    .parse::<u32>()
+                    .map_err(|_| anyhow!("bad value '{range}'"))?;
                 (v, v)
             };
             if step == 0 {

@@ -46,9 +46,15 @@ pub async fn query(host: &str, id: &str, key: Option<String>) -> Result<()> {
     match key {
         Some(k) => println!(
             "{}",
-            state.get(&k).map(|v| v.to_string()).unwrap_or_else(|| "null".into())
+            state
+                .get(&k)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".into())
         ),
-        None => println!("{}", serde_json::to_string_pretty(&state).unwrap_or_default()),
+        None => println!(
+            "{}",
+            serde_json::to_string_pretty(&state).unwrap_or_default()
+        ),
     }
     Ok(())
 }
@@ -62,7 +68,10 @@ pub async fn show(host: &str, id: &str) -> Result<()> {
     println!("  flow      {}", s(w, "deployment"));
     println!("  status    {}", s(w, "status"));
     println!("  trigger   {}", s(w, "trigger"));
-    println!("  attempts  {}", w.get("attempts").and_then(|v| v.as_i64()).unwrap_or(0));
+    println!(
+        "  attempts  {}",
+        w.get("attempts").and_then(|v| v.as_i64()).unwrap_or(0)
+    );
     if let Some(wake) = w.get("wake_at").and_then(|v| v.as_f64()) {
         println!("  wake_at   {wake} (epoch)");
     }
@@ -76,7 +85,11 @@ pub async fn show(host: &str, id: &str) -> Result<()> {
     println!("  steps:");
     if let Some(steps) = d["steps"].as_array() {
         for st in steps {
-            let dur = st.get("duration_ms").and_then(|v| v.as_i64()).map(|d| format!("{d}ms")).unwrap_or_else(|| "—".into());
+            let dur = st
+                .get("duration_ms")
+                .and_then(|v| v.as_i64())
+                .map(|d| format!("{d}ms"))
+                .unwrap_or_else(|| "—".into());
             println!(
                 "    #{:<3} {:<18} {:<9} {}",
                 st.get("seq").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -93,7 +106,10 @@ pub async fn workflows(host: &str, limit: i64) -> Result<()> {
     crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     let workflows = client.list_workflows(limit).await?;
-    println!("{:<12} {:<18} {:<9} {:<8} {:<4} {}", "ID", "FLOW", "STATUS", "TRIGGER", "ATT", "CREATED");
+    println!(
+        "{:<12} {:<18} {:<9} {:<8} {:<4} CREATED",
+        "ID", "FLOW", "STATUS", "TRIGGER", "ATT"
+    );
     for w in workflows {
         println!(
             "{:<12} {:<18} {:<9} {:<8} {:<4} {}",
@@ -112,7 +128,9 @@ pub async fn logs(host: &str, id: &str, follow: bool) -> Result<()> {
     crate::daemon::ensure(host).await?;
     let client = Client::new(host);
     if follow {
-        client.stream(id, |env| println!("{}", format_envelope(&env))).await?;
+        client
+            .stream(id, |env| println!("{}", format_envelope(&env)))
+            .await?;
     } else {
         let mut envs: Vec<Envelope> = Vec::new();
         for e in client.get_events(id).await? {
@@ -184,14 +202,29 @@ pub async fn run_oneshot(flows_path: &str, name: &str, params: Value) -> Result<
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let wf = store.get_workflow(&workflow_id)?.ok_or_else(|| anyhow!("workflow vanished"))?;
+    let wf = store
+        .get_workflow(&workflow_id)?
+        .ok_or_else(|| anyhow!("workflow vanished"))?;
     let steps = store.list_steps(&workflow_id)?;
     println!("\n── summary ─────────────────────────");
-    println!("workflow {}  status={}  attempts={}", wf.id, wf.status, wf.attempts);
+    println!(
+        "workflow {}  status={}  attempts={}",
+        wf.id, wf.status, wf.attempts
+    );
     for st in steps {
-        let dur = st.duration_ms.map(|d| format!("{d}ms")).unwrap_or_else(|| "—".into());
-        let tag = if st.status == "skipped" { " (resumed from journal)" } else { "" };
-        println!("  #{:<3} {:<16} {:<9} {}{}", st.seq, st.name, st.status, dur, tag);
+        let dur = st
+            .duration_ms
+            .map(|d| format!("{d}ms"))
+            .unwrap_or_else(|| "—".into());
+        let tag = if st.status == "skipped" {
+            " (resumed from journal)"
+        } else {
+            ""
+        };
+        println!(
+            "  #{:<3} {:<16} {:<9} {}{}",
+            st.seq, st.name, st.status, dur, tag
+        );
     }
     if wf.status != "success" {
         std::process::exit(1);
@@ -201,11 +234,23 @@ pub async fn run_oneshot(flows_path: &str, name: &str, params: Value) -> Result<
 
 pub fn format_envelope(env: &Envelope) -> String {
     if env.kind == "log" {
-        let stream = env.payload.get("stream").and_then(|v| v.as_str()).unwrap_or("out");
-        let line = env.payload.get("line").and_then(|v| v.as_str()).unwrap_or("");
+        let stream = env
+            .payload
+            .get("stream")
+            .and_then(|v| v.as_str())
+            .unwrap_or("out");
+        let line = env
+            .payload
+            .get("line")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         return format!("  │ [{stream}] {line}");
     }
-    let ty = env.payload.get("type").and_then(|v| v.as_str()).unwrap_or("event");
+    let ty = env
+        .payload
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("event");
     let p = &env.payload;
     match ty {
         "workflow_start" => "▶ workflow start".to_string(),
@@ -219,11 +264,37 @@ pub fn format_envelope(env: &Envelope) -> String {
         },
         "workflow_wake" => "⏰ woke — re-dispatched at wake time".to_string(),
         "workflow_signalled" => "✉ signal received — re-dispatched".to_string(),
-        "step_start" => format!("  ● #{} {} start (attempt {})", pi(p, "seq"), name_of(p), pi(p, "attempt")),
-        "step_success" => format!("  ✔ #{} {} ok ({}ms)", pi(p, "seq"), name_of(p), pi(p, "duration_ms")),
-        "step_skipped" => format!("  ⤼ #{} {} skipped ({})", pi(p, "seq"), name_of(p), ps(p, "reason")),
-        "step_retry" => format!("  ↻ #{} {} retry -> attempt {} ({})", pi(p, "seq"), name_of(p), pi(p, "next_attempt"), ps(p, "error")),
-        "step_failure" => format!("  ✗ #{} {} failed: {}", pi(p, "seq"), name_of(p), ps(p, "error")),
+        "step_start" => format!(
+            "  ● #{} {} start (attempt {})",
+            pi(p, "seq"),
+            name_of(p),
+            pi(p, "attempt")
+        ),
+        "step_success" => format!(
+            "  ✔ #{} {} ok ({}ms)",
+            pi(p, "seq"),
+            name_of(p),
+            pi(p, "duration_ms")
+        ),
+        "step_skipped" => format!(
+            "  ⤼ #{} {} skipped ({})",
+            pi(p, "seq"),
+            name_of(p),
+            ps(p, "reason")
+        ),
+        "step_retry" => format!(
+            "  ↻ #{} {} retry -> attempt {} ({})",
+            pi(p, "seq"),
+            name_of(p),
+            pi(p, "next_attempt"),
+            ps(p, "error")
+        ),
+        "step_failure" => format!(
+            "  ✗ #{} {} failed: {}",
+            pi(p, "seq"),
+            name_of(p),
+            ps(p, "error")
+        ),
         "log" => format!("  │ {}", ps(p, "message")),
         other => format!("  · {other}"),
     }

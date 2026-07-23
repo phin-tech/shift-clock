@@ -149,7 +149,11 @@ async fn refresh_detail(client: &Client, ui: &mut AppUi) {
         ui.events = Vec::new();
         return;
     };
-    let id = run.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let id = run
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     ui.detail = client.get_workflow(&id).await.ok();
     ui.logs = client.get_logs(&id).await.unwrap_or_default();
     ui.events = client.get_events(&id).await.unwrap_or_default();
@@ -158,7 +162,11 @@ async fn refresh_detail(client: &Client, ui: &mut AppUi) {
 fn draw(f: &mut Frame, ui: &AppUi) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
         .split(f.area());
 
     // Tab bar
@@ -167,8 +175,17 @@ fn draw(f: &mut Frame, ui: &AppUi) {
             Tab::Runs => 0,
             Tab::Scheduled => 1,
         })
-        .block(Block::default().borders(Borders::ALL).title(" shift-clock "))
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" shift-clock "),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .divider("│");
     f.render_widget(tabs, outer[0]);
 
@@ -226,8 +243,18 @@ fn draw_runs(f: &mut Frame, ui: &AppUi, area: Rect) {
         ));
         if let Some(steps) = d["steps"].as_array() {
             for t in steps {
-                let dur = t.get("duration_ms").and_then(|v| v.as_i64()).map(|d| format!("{d}ms")).unwrap_or_else(|| "—".into());
-                body.push_str(&format!("  #{:<3} {:<16} {:<9} {}\n", t.get("seq").and_then(|v| v.as_i64()).unwrap_or(0), jstr(t, "name"), jstr(t, "status"), dur));
+                let dur = t
+                    .get("duration_ms")
+                    .and_then(|v| v.as_i64())
+                    .map(|d| format!("{d}ms"))
+                    .unwrap_or_else(|| "—".into());
+                body.push_str(&format!(
+                    "  #{:<3} {:<16} {:<9} {}\n",
+                    t.get("seq").and_then(|v| v.as_i64()).unwrap_or(0),
+                    jstr(t, "name"),
+                    jstr(t, "status"),
+                    dur
+                ));
             }
         }
         // Merged activity: task events + SDK log() messages + stdout/stderr.
@@ -261,9 +288,18 @@ fn draw_scheduled(f: &mut Frame, ui: &AppUi, area: Rect) {
             let enabled = fl.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
             let cron = fl.get("cron").and_then(|v| v.as_str());
             let (sched, style) = match cron {
-                Some(expr) if enabled => (format!("{expr:<11} next {}", next_fire(expr, &now)), Style::default().fg(Color::Cyan)),
-                Some(expr) => (format!("{expr:<11} (disabled)"), Style::default().fg(Color::DarkGray)),
-                None => ("manual only".to_string(), Style::default().fg(Color::DarkGray)),
+                Some(expr) if enabled => (
+                    format!("{expr:<11} next {}", next_fire(expr, &now)),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Some(expr) => (
+                    format!("{expr:<11} (disabled)"),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                None => (
+                    "manual only".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ),
             };
             ListItem::new(format!("⏱ {name:<12} {sched}")).style(style)
         })
@@ -273,7 +309,11 @@ fn draw_scheduled(f: &mut Frame, ui: &AppUi, area: Rect) {
         lstate.select(Some(ui.flow_selected));
     }
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" scheduled jobs "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" scheduled jobs "),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("▶ ");
     f.render_stateful_widget(list, cols[0], &mut lstate);
@@ -285,7 +325,12 @@ fn draw_scheduled(f: &mut Frame, ui: &AppUi, area: Rect) {
         let cmd = fl
             .get("cmd")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" "))
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
             .unwrap_or_default();
         let cron = fl.get("cron").and_then(|v| v.as_str());
         body.push_str(&format!("job      {name}\ncommand  {cmd}\n"));
@@ -309,7 +354,12 @@ fn draw_scheduled(f: &mut Frame, ui: &AppUi, area: Rect) {
         }
         body.push_str("\nrecent runs:\n");
         let mut any = false;
-        for r in ui.runs.iter().filter(|r| jstr(r, "deployment") == name).take(8) {
+        for r in ui
+            .runs
+            .iter()
+            .filter(|r| jstr(r, "deployment") == name)
+            .take(8)
+        {
             any = true;
             body.push_str(&format!(
                 "  {} {:<9} {:<7} {}\n",

@@ -19,7 +19,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "shift-clock", version, about = "Local, language-agnostic flow orchestrator")]
+#[command(
+    name = "shift-clock",
+    version,
+    about = "Local, language-agnostic flow orchestrator"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -128,23 +132,47 @@ async fn main() -> Result<()> {
             println!("scaffolded {}", dir.display());
             Ok(())
         }
-        Some(Cmd::Serve { db, flows, addr, attach }) => server::serve(db, flows, addr, attach).await,
-        Some(Cmd::Trigger { name, params, id, host }) => {
-            cli::trigger(&host, &name, cli::parse_params(&params), id).await
-        }
-        Some(Cmd::Signal { workflow_id, name, payload, host }) => {
-            let payload = serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
+        Some(Cmd::Serve {
+            db,
+            flows,
+            addr,
+            attach,
+        }) => server::serve(db, flows, addr, attach).await,
+        Some(Cmd::Trigger {
+            name,
+            params,
+            id,
+            host,
+        }) => cli::trigger(&host, &name, cli::parse_params(&params), id).await,
+        Some(Cmd::Signal {
+            workflow_id,
+            name,
+            payload,
+            host,
+        }) => {
+            let payload =
+                serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
             cli::signal(&host, &workflow_id, &name, payload).await
         }
         Some(Cmd::Show { workflow_id, host }) => cli::show(&host, &workflow_id).await,
-        Some(Cmd::Query { workflow_id, key, host }) => cli::query(&host, &workflow_id, key).await,
+        Some(Cmd::Query {
+            workflow_id,
+            key,
+            host,
+        }) => cli::query(&host, &workflow_id, key).await,
         Some(Cmd::Status { host }) => daemon::status(&host).await,
         Some(Cmd::Stop { host }) => daemon::stop(&host),
-        Some(Cmd::Run { name, flows, params }) => {
-            cli::run_oneshot(&flows, &name, cli::parse_params(&params)).await
-        }
+        Some(Cmd::Run {
+            name,
+            flows,
+            params,
+        }) => cli::run_oneshot(&flows, &name, cli::parse_params(&params)).await,
         Some(Cmd::Workflows { limit, host }) => cli::workflows(&host, limit).await,
-        Some(Cmd::Logs { workflow_id, follow, host }) => cli::logs(&host, &workflow_id, follow).await,
+        Some(Cmd::Logs {
+            workflow_id,
+            follow,
+            host,
+        }) => cli::logs(&host, &workflow_id, follow).await,
         Some(Cmd::Dashboard { host }) => tui::run(&host).await,
     }
 }
