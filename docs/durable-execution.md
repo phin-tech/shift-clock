@@ -1,11 +1,11 @@
 # Durable execution changeover (workflows you can resume)
 
-> **Status: all phases (0–4) shipped, including the follow-ups.** Verified:
-> sequence-keyed journal, crash resume, daemon-restart recovery, durable `sleep`
-> with process **park/unload**, **signals** (wait/park/resume), per-deployment
-> **concurrency** limits, **idempotent** submit, code **version** guarding,
-> **exactly-once transactional steps** (`set_state` commits atomically with the
-> journal), and **query** (`shift-clock query <id>` reads live durable state).
+> **Status: the durable-execution core (phases 0–4) is shipped and verified.**
+> Sequence-keyed journal, crash resume, daemon-restart recovery, durable `sleep`
+> with process **park/unload**, **signals**, per-deployment **concurrency**,
+> **idempotent** submit, code **version** guarding, **exactly-once transactional
+> steps**, and **query**. A few optional/nice-to-have items remain — tracked as a
+> checklist in [Roadmap (todo)](#roadmap-todo) below.
 
 Goal: a broken **workflow** resumes instead of restarting — surviving both a flow
 crash *and* a daemon restart — by journaling each step's result and skipping
@@ -162,48 +162,45 @@ emit step_success(seq, name); return result
   mapping. Phase 0 pins nothing; later, stamp a code version per workflow and
   refuse/branch on mismatch.
 
-## Phased roadmap — ✅ all shipped
+## Roadmap (todo)
 
-**Phase 0 — rename + sequence-keyed journal. ✅**
-`flow→workflow`, `task→step` (clean rename, no back-compat). Replace `task_results` with
-`workflow_steps` keyed by `(workflow_id, step_seq)`. SDKs add the step counter and
-skip-by-seq. Context delivers the journal. *Gets:* correct checkpointing in loops;
-durable relaunch within a live daemon. *Still in-process only.*
+**Phase 0 — rename + sequence-keyed journal**
+- [x] `flow→workflow`, `task→step` (clean rename)
+- [x] `workflow_steps` journal keyed by `(workflow_id, step_seq)` (fixes loop collisions)
+- [x] SDK step counter + skip-by-seq; context delivers the journal
 
-**Phase 1 — durable resume across daemon restart.**
-Step-result RPC with ack; `workflows` status lifecycle + idempotent id; recovery
-scan re-dispatches interrupted workflows on startup; workflow-level retry policy.
-*Gets:* "resume a broken workflow" even if the whole daemon died. **This is the
-feature you asked for.**
+**Phase 1 — durable resume across daemon restart**
+- [x] `step_result`⇄`ack` RPC (durability barrier)
+- [x] `workflows` status lifecycle + idempotent id
+- [x] recovery scan re-dispatches interrupted workflows on startup
+- [x] workflow-level retry policy
 
-**Phase 2 — durable timers / sleep. ✅**
-`sleep(secs)` journals `wake_at` before waiting; a crash mid-sleep resumes and
-waits only the remainder. Long sleeps unload the process (see Phase 4).
+**Phase 2 — durable timers**
+- [x] `sleep(secs)` journals `wake_at` before waiting; resume waits only the remainder
 
-**Phase 3 — ergonomics + exactly-once. ✅**
-Idempotent submit (`trigger --id <key>` returns the existing workflow), per-step
-exponential backoff + jitter, `shift-clock show <id>` (status + step journal), and
-**exactly-once transactional steps**: `set_state(k, v)` calls inside a step are
-buffered and committed **in the same SQLite transaction as the step's journal
-row** (`store::commit_step_tx`). Either both land or neither does, so a crash
-before commit re-runs the step cleanly and a crash after commit skips it —
-`charged_total` stays 100, never 200. (External effects outside the store are
-still at-least-once; record their completion via `set_state` to get exactly-once.)
+**Phase 3 — ergonomics + exactly-once**
+- [x] idempotent submit (`trigger --id`)
+- [x] per-step exponential backoff + jitter
+- [x] `shift-clock show <id>` (status + journal)
+- [x] exactly-once transactional steps — `set_state` commits in the same SQLite txn as the journal row (`store::commit_step_tx`)
 
-**Phase 4 — Temporal-grade. ✅**
-- **Park / unload** — a long `sleep` exits the process; the scheduler
-  re-dispatches at `wake_at` (zero resources while parked). Verified: 0 processes
-  alive during a 6s durable sleep.
-- **Signals** — `wait_signal(name)` parks until `shift-clock signal <id> <name>
-  <payload>` arrives, then resumes and returns the payload.
-- **Concurrency** — per-deployment `concurrency = N` cap; over-limit triggers are
-  rejected.
-- **Versioning** — a workflow stamps a hash of its command; resume against a
-  changed command is refused with a version-mismatch error.
-- **Query** — `shift-clock query <id> [key]` reads a workflow's durable state
-  (`GET /workflows/:id/state`). Works whether it's running, parked, or done —
-  the state lives in the KV table, not in a live process.
-*Still open (genuinely optional):* rate-limited queues.
+**Phase 4 — Temporal-grade**
+- [x] park / unload — long `sleep` exits the process; scheduler re-dispatches at `wake_at` (0 procs while parked)
+- [x] signals — `wait_signal(name)` ⇄ `shift-clock signal <id> <name> <payload>`
+- [x] per-deployment `concurrency = N` cap
+- [x] version guarding — refuse to resume against a changed command
+- [x] `query` — read a workflow's durable KV state (running, parked, or done)
+- [ ] rate-limited work queues
+- [ ] `query` of a *running* workflow's live in-memory state (today: persisted state only)
+- [ ] exactly-once across *external* systems (today: same-DB writes only)
+
+**Packaging / ops**
+- [x] self-spawning daemon (tmux/herdr-style), `~/.config/shift-clock`
+- [x] CI (fmt/clippy + build/test on mac+linux)
+- [x] release-tag builds (mac arm64/x86_64, linux arm64/x86_64) → GitHub Release
+- [x] Homebrew tap (`brew install phin-tech/tap/shift-clock`)
+- [ ] Intel-mac release binary in the formula (runner-queued; lands next tag)
+- [ ] `HOMEBREW_TAP_TOKEN` secret so releases auto-bump the tap
 
 ## Mapping to the current codebase
 

@@ -1,5 +1,7 @@
 # shift-clock
 
+[![CI](https://github.com/phin-tech/shift-clock/actions/workflows/ci.yml/badge.svg)](https://github.com/phin-tech/shift-clock/actions/workflows/ci.yml)
+
 A local, language-agnostic durable orchestrator — think **DBOS meets a local
 Prefect**. A single Rust binary that schedules (cron) and supervises
 **workflows** written in any language, talks to them over a local Unix socket,
@@ -31,15 +33,27 @@ Workflows are just commands — a `python` script, a `node` script, or a bare
         └─ events up + step_result RPC ─┘
 ```
 
-## Quick start
+## Install
 
-Everything lives in `~/.config/shift-clock/` (SDKs, `flows.toml`, `flows/`, the
-SQLite DB, pid/log). The binary is self-contained — `init` scaffolds it, and any
-command works from any directory.
+**Homebrew** (macOS arm64, Linux arm64/x86_64):
 
 ```bash
-cargo build && cargo install --path .    # or use ./target/debug/shift-clock
+brew install phin-tech/tap/shift-clock
+```
 
+**From source** (any platform with a Rust toolchain):
+
+```bash
+cargo install --git https://github.com/phin-tech/shift-clock
+```
+
+## Quick start
+
+The binary is self-contained; everything lives in `~/.config/shift-clock/` (SDKs,
+`flows.toml`, `flows/`, the SQLite DB, pid/log). Any command works from any
+directory.
+
+```bash
 shift-clock init         # scaffold ~/.config/shift-clock (SDKs + a sample manifest)
 shift-clock              # ← bare command: opens the dashboard, auto-spawning the daemon
 shift-clock trigger hello
@@ -141,9 +155,8 @@ $ shift-clock logs w-2a55afeb
 ✔ workflow SUCCESS
 ```
 
-See [`docs/durable-execution.md`](docs/durable-execution.md) for the full model,
-the DBOS-vs-Temporal reasoning, and the roadmap (durable timers, exactly-once
-steps, signals).
+See [`docs/durable-execution.md`](docs/durable-execution.md) for the full model
+and the DBOS-vs-Temporal reasoning.
 
 ## Writing a workflow
 
@@ -199,7 +212,31 @@ exit code, stdout/stderr captured as logs.
 | Observability | **TUI dashboard** (Runs + Scheduled tabs) + CLI, both HTTP/SSE clients. |
 | Daemon lifecycle | **Self-spawning** (tmux/herdr-style): a client `setsid`-forks a detached `serve` if none is reachable. Transport stays HTTP (remote-ready) — the Unix socket Herdr needs is only for PTY FD-passing, which we don't do. |
 
-## Known limitations (see the design doc)
+## Roadmap
 
-At-least-once side effects (use idempotency keys), determinism debt (keep
-non-determinism inside steps), and no mid-flight versioning yet.
+Durable execution — shipped (details in [`docs/durable-execution.md`](docs/durable-execution.md)):
+
+- [x] Sequence-keyed step journal + crash resume
+- [x] Recovery scan on daemon restart
+- [x] Durable `sleep` with process **park / unload**
+- [x] **Signals** (`wait_signal` ⇄ `shift-clock signal`)
+- [x] Per-deployment **concurrency** limits
+- [x] **Idempotent** submit (`--id`)
+- [x] Code **version** guarding (refuse to resume changed code)
+- [x] **Exactly-once** transactional steps (`set_state`) + `query`
+- [x] Self-spawning daemon (tmux/herdr-style), `~/.config/shift-clock`
+- [x] CI + release-tag builds (mac/linux) + Homebrew tap
+
+Not yet:
+
+- [ ] Intel-mac release binary (runner-queued; lands on the next tag)
+- [ ] Rate-limited work queues
+- [ ] `query` of a *running* workflow's live state (today: parked/persisted state)
+- [ ] Exactly-once across *external* systems (only same-DB writes today)
+- [ ] `HOMEBREW_TAP_TOKEN` secret so releases auto-bump the tap
+
+## Known caveats
+
+- **At-least-once external side effects** — record completion via `set_state` for
+  same-DB exactly-once; otherwise guard external effects with idempotency keys.
+- **Determinism debt** — keep non-determinism inside steps so replay stays aligned.
