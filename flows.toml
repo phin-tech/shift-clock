@@ -1,0 +1,50 @@
+# The static manifest: each [[flow]] is a "deployment" = name + command +
+# schedule + params + policies. This file is one writer into the deployments
+# table; dynamic self-registration would be another writer later.
+
+[[flow]]
+name = "heartbeat"
+cmd = ["python3", "flows/heartbeat.py"]
+cron = "* * * * *"        # every minute — handy for watching the scheduler
+
+[[flow]]
+name = "etl"
+cmd = ["python3", "flows/etl.py"]
+cron = "*/5 * * * *"       # every 5 minutes
+params = { source = "prod" }
+retries = 1
+
+[[flow]]
+name = "report"
+cmd = ["node", "flows/report.ts"]
+cron = "0 * * * *"         # top of every hour
+params = { format = "html" }
+
+[[flow]]
+name = "crashy"
+cmd = ["python3", "flows/crashy.py"]
+retries = 2           # no cron: trigger manually to see relaunch
+
+[[flow]]
+name = "slow"
+cmd = ["python3", "flows/slow.py"]   # durable sleep → parks; re-dispatched at wake
+
+[[flow]]
+name = "approval"
+cmd = ["python3", "flows/approval.py"]   # parks on wait_signal("approve")
+
+[[flow]]
+name = "payment"
+cmd = ["python3", "flows/payment.py"]    # exactly-once charge + queryable state
+retries = 1
+
+[[flow]]
+name = "busy"
+cmd = ["python3", "flows/busy.py"]
+overlap = "concurrent"   # allow parallel, but cap it…
+concurrency = 1          # …at 1 at a time (Phase 4)
+
+[[flow]]
+name = "hello"
+cmd = ["bash", "flows/hello.sh"]
+params = { source = "manual" }   # bare command, no SDK; judged by exit code

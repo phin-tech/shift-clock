@@ -1,0 +1,5 @@
+/target
+shift-clock.db
+shift-clock.db-*
+shift-clock.service.log
+/out

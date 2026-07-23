@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd LaunchAgent for shift-clock. @WORKDIR@ is substituted at install
+     time (see deploy/install.sh or the README). Runs `serve` at login, restarts
+     on crash, and logs to the working directory. PATH is set explicitly because
+     launchd's default PATH won't find python3/node/bash for spawning flows. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>tech.phin.shift-clock</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@WORKDIR@/target/release/shift-clock</string>
+        <string>serve</string>
+        <string>--addr</string>
+        <string>127.0.0.1:8080</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@WORKDIR@</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>@WORKDIR@/shift-clock.service.log</string>
+    <key>StandardErrorPath</key>
+    <string>@WORKDIR@/shift-clock.service.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
