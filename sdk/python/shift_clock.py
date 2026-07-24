@@ -33,13 +33,16 @@ _state = {}          # durable KV snapshot delivered in context
 _pending_writes = [] # set_state() calls buffered during the current step
 _seq = 0
 _connected = False
+_workflow_id = None  # this workflow's id (for deterministic child ids)
 
 
 def _connect():
     global _sock, _rfile, _wfile, _input, _journal, _signals, _state, _connected
+    global _workflow_id
     if _connected:
         return
     _connected = True
+    _workflow_id = os.environ.get("SHIFT_CLOCK_WORKFLOW_ID")
     path = os.environ.get("SHIFT_CLOCK_SOCK")
     if not path:
         raw = os.environ.get("SHIFT_CLOCK_INPUT")
@@ -60,6 +63,7 @@ def _connect():
         _journal = ctx.get("journal") or {}
         _signals = list(ctx.get("signals") or [])
         _state = dict(ctx.get("state") or {})
+        _workflow_id = ctx.get("workflow_id") or _workflow_id
     except Exception:
         _input, _journal, _signals, _state = {}, {}, [], {}
 
@@ -196,6 +200,129 @@ def wait_signal(name):
     # No signal yet — park and wait to be re-dispatched when one arrives.
     _send({"type": "log", "level": "info", "message": f"waiting for signal '{name}'…"})
     _park(None)
+
+
+# -- child workflows (fan-out / fan-in) -------------------------------------
+
+_PENDING = object()
+
+
+class ChildFailed(Exception):
+    """Raised by a join when a child workflow finished in a failed state."""
+
+    def __init__(self, child_id):
+        super().__init__(f"child workflow {child_id} failed")
+        self.child_id = child_id
+
+
+class ChildHandle:
+    """A durable handle to a spawned child — a 'future' whose resolution survives
+    a crash (it's journaled). Join with .result(), or in bulk via wait_all()."""
+
+    def __init__(self, child_id):
+        self.child_id = child_id
+        self._seq = None  # join seq, assigned by wait_all() (position-stable)
+
+    def result(self):
+        return wait_all([self])[0]
+
+
+def spawn(deployment, params=None):
+    """Fork a child workflow (another deployment). Returns a ChildHandle.
+
+    The child id is deterministic (`{workflow_id}.{seq}`), so a re-spawn on replay
+    attaches to the existing child (idempotent) instead of duplicating it."""
+    seq = _next_seq()
+    j = _journal.get(str(seq))
+    if j and j.get("status") == "success":
+        return ChildHandle(j["output"]["child_id"])
+    _send({"type": "step_start", "seq": seq, "name": f"spawn:{deployment}", "attempt": 1})
+    child_id = f"{_workflow_id}.{seq}"
+    _rpc({"type": "spawn_child", "seq": seq, "deployment": deployment, "input": params or {}})
+    return ChildHandle(child_id)
+
+
+def _child_output(handle, rec):
+    if (rec or {}).get("status") != "success":
+        raise ChildFailed(handle.child_id)
+    return rec.get("output")
+
+
+def _resolve_child(handle):
+    """Return a child's output if it's done (journal hit or an arrived signal),
+    else _PENDING. Consuming an arrived child is a journaled RPC."""
+    j = _journal.get(str(handle._seq))
+    if j and j.get("status") == "success":
+        return _child_output(handle, j["output"])
+    name = f"child:{handle.child_id}"
+    for idx, sig in enumerate(_signals):
+        if sig.get("name") == name:
+            payload = sig.get("payload")
+            del _signals[idx]
+            _send({"type": "step_start", "seq": handle._seq, "name": name, "attempt": 1})
+            _rpc({"type": "signal_consume", "seq": handle._seq, "name": name, "payload": payload})
+            return _child_output(handle, payload)
+    return _PENDING
+
+
+def wait_all(handles):
+    """Join on every child, returning outputs in handle (index) order. Drains all
+    children that have already finished in a single wake — parking (unloading)
+    once per wave of completions, not once per child."""
+    # Phase A — reserve a deterministic join-seq per handle, up front, in order.
+    # This keeps the seq walk identical on every run regardless of arrival timing.
+    for h in handles:
+        if h._seq is None:
+            h._seq = _next_seq()
+    # Phase B — resolve every available child now; park if any remain unfinished.
+    results = [None] * len(handles)
+    pending = False
+    for i, h in enumerate(handles):
+        r = _resolve_child(h)
+        if r is _PENDING:
+            pending = True
+        else:
+            results[i] = r
+    if pending:
+        _park(None)  # unload; on redispatch wait_all re-runs and replays journaled joins
+    return results
+
+
+def as_completed(handles):
+    """Yield (handle, output) in the order children FINISH. Arrival order is
+    nondeterministic, so each yield is recorded as a journaled step — replay
+    reproduces the exact same order. Ties within one wake break by index."""
+    remaining = set(range(len(handles)))
+    while remaining:
+        seq = _next_seq()  # one seq per yielded rank (deterministic in rank order)
+        j = _journal.get(str(seq))
+        if j and j.get("status") == "success":  # replay: rank -> child is recorded
+            rec = j["output"]
+            i = rec["index"]
+            remaining.discard(i)
+            yield handles[i], _child_output(handles[i], rec.get("payload"))
+            continue
+        # Original run: surface the lowest-index child that has already arrived.
+        avail = [
+            i for i in sorted(remaining)
+            if any(s.get("name") == f"child:{handles[i].child_id}" for s in _signals)
+        ]
+        if not avail:
+            _park(None)  # nothing new this wake — unload; redispatch brings more
+        i = avail[0]
+        name = f"child:{handles[i].child_id}"
+        payload = None
+        for idx, sig in enumerate(_signals):
+            if sig.get("name") == name:
+                payload = sig.get("payload")
+                del _signals[idx]
+                break
+        _send({"type": "step_start", "seq": seq, "name": name, "attempt": 1})
+        # Journal the rank -> child mapping (the ordering is the durable artifact).
+        _rpc({"type": "step_result", "seq": seq, "name": name, "duration_ms": 0,
+              "output": {"index": i, "payload": payload}})
+        remaining.discard(i)
+        yield handles[i], _child_output(handles[i], payload)
 
 
 def workflow(fn):

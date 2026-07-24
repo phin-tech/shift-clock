@@ -24,17 +24,35 @@ pub struct AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(ui_index))
+        .route("/ui", get(ui_index))
         .route("/health", get(|| async { "ok" }))
         .route("/flows", get(list_flows))
         .route("/flows/:name/trigger", post(trigger_flow))
         .route("/workflows", get(list_workflows))
         .route("/workflows/:id", get(get_workflow))
+        .route("/workflows/:id/children", get(get_children))
         .route("/workflows/:id/events", get(get_events))
         .route("/workflows/:id/logs", get(get_logs))
         .route("/workflows/:id/stream", get(stream_workflow))
         .route("/workflows/:id/signals", post(send_signal))
         .route("/workflows/:id/state", get(query_state))
         .with_state(state)
+}
+
+/// The self-contained, read-only web dashboard (baked into the binary). A second
+/// client of the same HTTP/SSE API the CLI and TUI use — served at `/`.
+async fn ui_index() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../web/index.html"))
+}
+
+/// Children spawned by a workflow (for the run tree in the dashboard).
+async fn get_children(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let children = s.store.list_children(&id)?;
+    Ok(Json(json!({ "children": children })))
 }
 
 /// Query a workflow's durable state — works whether it's running, parked, or done.

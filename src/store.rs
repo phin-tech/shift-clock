@@ -38,6 +38,10 @@ pub struct Workflow {
     pub version: String,
     pub created_at: String,
     pub finished_at: Option<String>,
+    /// If this workflow was spawned by another, its parent's id and the parent's
+    /// step-seq at the spawn call (used to route completion back up as a signal).
+    pub parent_id: Option<String>,
+    pub parent_seq: Option<i64>,
 }
 
 /// A journal entry as delivered to the SDK in the context handshake.
@@ -102,7 +106,9 @@ impl Store {
                 version TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                finished_at TEXT
+                finished_at TEXT,
+                parent_id TEXT,
+                parent_seq INTEGER
             );
             CREATE TABLE IF NOT EXISTS kv (
                 workflow_id TEXT NOT NULL,
@@ -149,6 +155,14 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_logs_wf ON logs(workflow_id, id);
             "#,
         )?;
+        // Backfill child-workflow columns on DBs created before they existed.
+        // (No-ops — "duplicate column" — on a freshly-created schema above.)
+        let _ = conn.execute("ALTER TABLE workflows ADD COLUMN parent_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE workflows ADD COLUMN parent_seq INTEGER", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workflows_parent ON workflows(parent_id)",
+            [],
+        );
         Ok(())
     }
 
@@ -208,6 +222,8 @@ impl Store {
 
     // -- workflows ----------------------------------------------------------
 
+    /// Create a workflow row. `parent` is `Some((parent_id, parent_seq))` when this
+    /// workflow was spawned by another (a child workflow); `None` for a top-level run.
     pub fn create_workflow(
         &self,
         id: &str,
@@ -215,15 +231,50 @@ impl Store {
         trigger: &str,
         input: &Value,
         version: &str,
+        parent: Option<(&str, i64)>,
     ) -> Result<()> {
         let c = self.conn.lock().unwrap();
         let now = now_iso();
+        let (parent_id, parent_seq) = match parent {
+            Some((pid, pseq)) => (Some(pid), Some(pseq)),
+            None => (None, None),
+        };
         c.execute(
-            "INSERT INTO workflows(id,deployment,trigger,status,input,attempts,version,created_at,updated_at)
-             VALUES(?1,?2,?3,'running',?4,0,?5,?6,?6)",
-            params![id, deployment, trigger, input.to_string(), version, now],
+            "INSERT INTO workflows(id,deployment,trigger,status,input,attempts,version,created_at,updated_at,parent_id,parent_seq)
+             VALUES(?1,?2,?3,'running',?4,0,?5,?6,?6,?7,?8)",
+            params![id, deployment, trigger, input.to_string(), version, now, parent_id, parent_seq],
         )?;
         Ok(())
+    }
+
+    /// Children spawned by a parent workflow, oldest first (for the run tree).
+    pub fn list_children(&self, parent_id: &str) -> Result<Vec<Workflow>> {
+        let c = self.conn.lock().unwrap();
+        let mut stmt = c.prepare(
+            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at,parent_id,parent_seq
+             FROM workflows WHERE parent_id=?1 ORDER BY created_at, rowid",
+        )?;
+        let rows = stmt.query_map(params![parent_id], |r| Ok(row_to_workflow(r)))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r??);
+        }
+        Ok(out)
+    }
+
+    /// A child's `(parent_id, parent_seq)`, if it has a parent.
+    pub fn parent_of(&self, id: &str) -> Result<Option<(String, i64)>> {
+        let c = self.conn.lock().unwrap();
+        let mut stmt = c.prepare("SELECT parent_id,parent_seq FROM workflows WHERE id=?1")?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(r) = rows.next()? {
+            let pid: Option<String> = r.get(0)?;
+            let pseq: Option<i64> = r.get(1)?;
+            if let (Some(pid), Some(pseq)) = (pid, pseq) {
+                return Ok(Some((pid, pseq)));
+            }
+        }
+        Ok(None)
     }
 
     /// Park a workflow: unloaded, to be re-dispatched at `wake_at` (or when a
@@ -256,10 +307,29 @@ impl Store {
     pub fn list_sleeping_due(&self, now_epoch: f64) -> Result<Vec<Workflow>> {
         let c = self.conn.lock().unwrap();
         let mut stmt = c.prepare(
-            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at
+            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at,parent_id,parent_seq
              FROM workflows WHERE status='sleeping' AND wake_at IS NOT NULL AND wake_at <= ?1",
         )?;
         let rows = stmt.query_map(params![now_epoch], |r| Ok(row_to_workflow(r)))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r??);
+        }
+        Ok(out)
+    }
+
+    /// Signal-parked ('waiting') workflows that already have an unconsumed signal.
+    /// Re-dispatched by the scheduler to close any lost-wakeup race — e.g. children
+    /// finishing while the parent was mid-resume, so `notify_signal` was dropped.
+    pub fn list_waiting_with_signals(&self) -> Result<Vec<Workflow>> {
+        let c = self.conn.lock().unwrap();
+        let mut stmt = c.prepare(
+            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at,parent_id,parent_seq
+             FROM workflows
+             WHERE status='waiting'
+               AND EXISTS (SELECT 1 FROM signals s WHERE s.workflow_id=workflows.id AND s.consumed=0)",
+        )?;
+        let rows = stmt.query_map([], |r| Ok(row_to_workflow(r)))?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r??);
@@ -306,7 +376,7 @@ impl Store {
     pub fn get_workflow(&self, id: &str) -> Result<Option<Workflow>> {
         let c = self.conn.lock().unwrap();
         let mut stmt = c.prepare(
-            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at
+            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at,parent_id,parent_seq
              FROM workflows WHERE id=?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -320,7 +390,7 @@ impl Store {
     pub fn list_workflows(&self, limit: i64) -> Result<Vec<Workflow>> {
         let c = self.conn.lock().unwrap();
         let mut stmt = c.prepare(
-            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at
+            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at,parent_id,parent_seq
              FROM workflows ORDER BY created_at DESC, rowid DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |r| Ok(row_to_workflow(r)))?;
@@ -335,7 +405,7 @@ impl Store {
     pub fn list_running(&self) -> Result<Vec<Workflow>> {
         let c = self.conn.lock().unwrap();
         let mut stmt = c.prepare(
-            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at
+            "SELECT id,deployment,trigger,status,input,output,error,attempts,wake_at,version,created_at,finished_at,parent_id,parent_seq
              FROM workflows WHERE status='running' ORDER BY created_at",
         )?;
         let rows = stmt.query_map([], |r| Ok(row_to_workflow(r)))?;
@@ -624,5 +694,7 @@ fn row_to_workflow(r: &rusqlite::Row) -> Result<Workflow> {
         version: r.get(9)?,
         created_at: r.get(10)?,
         finished_at: r.get(11)?,
+        parent_id: r.get(12)?,
+        parent_seq: r.get(13)?,
     })
 }

@@ -190,9 +190,22 @@ emit step_success(seq, name); return result
 - [x] per-deployment `concurrency = N` cap
 - [x] version guarding — refuse to resume against a changed command
 - [x] `query` — read a workflow's durable KV state (running, parked, or done)
-- [ ] rate-limited work queues
 - [ ] `query` of a *running* workflow's live in-memory state (today: persisted state only)
 - [ ] exactly-once across *external* systems (today: same-DB writes only)
+
+**Phase 5 — child workflows (durable fan-out / fan-in)**
+- [x] `spawn(deployment, params)` — fork a child; deterministic id `{parent}.{seq}`
+  makes re-spawn on replay idempotent (reuses idempotent submit)
+- [x] join = signals — a finished child is routed to its parent as a
+  `child:{id}` signal; `parent_id`/`parent_seq` columns link the tree
+- [x] `wait_all` — index-order join; pre-assigns join-seqs up front so it drains
+  every already-finished child per wake (parks once per wave, not per child)
+- [x] `as_completed` — arrival-order join; each yield is a journaled step recording
+  the rank→child mapping, so replay reproduces the order deterministically
+- [x] lost-wakeup fix — scheduler sweep (`resume_signalled_waiters`) + an immediate
+  re-check on park re-dispatch signal-waiters holding a pending child signal
+- [x] nesting depth cap (runaway fan-out guard); read-only web run-tree view
+- [ ] rate-limited work queues (child fan-out is not yet throttled)
 
 **Packaging / ops**
 - [x] self-spawning daemon (tmux/herdr-style), `~/.config/shift-clock`

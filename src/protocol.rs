@@ -122,6 +122,16 @@ pub enum FlowMsg {
         #[serde(default)]
         payload: Value,
     },
+    /// Fork a child workflow (Phase 5). Like a durable RPC: the worker triggers
+    /// the named deployment with a deterministic child id (`{parent}.{seq}`, so
+    /// re-spawn on replay is idempotent), journals that id at `seq`, and acks.
+    /// The child's completion is later routed back as a `child:{child_id}` signal.
+    SpawnChild {
+        seq: u32,
+        deployment: String,
+        #[serde(default)]
+        input: Value,
+    },
 }
 
 /// worker -> workflow, in reply to a `step_result`.

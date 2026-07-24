@@ -33,8 +33,8 @@ pub struct Worker {
 
 /// How a single execution ended.
 enum Terminal {
-    Success,
-    Failure,
+    Success(Value), // the workflow's return value (persisted; routed to a parent)
+    Failure(String),
     Parked(Option<f64>), // Some(wake_at) = timer; None = waiting for a signal
 }
 
@@ -112,9 +112,78 @@ impl Worker {
             id.unwrap_or_else(|| format!("w-{}", &Uuid::new_v4().simple().to_string()[..8]));
         let version = version_of(&dep.cmd);
         self.store
-            .create_workflow(&workflow_id, &dep.name, trigger, &input, &version)?;
+            .create_workflow(&workflow_id, &dep.name, trigger, &input, &version, None)?;
         self.spawn_supervise(dep, workflow_id.clone(), input);
         Ok(workflow_id)
+    }
+
+    /// Fork a child workflow: create it linked to `(parent_id, parent_seq)` and
+    /// supervise it. Idempotent on `child_id` (re-spawn on replay attaches to the
+    /// existing child). Returns false if refused (unknown flow or depth cap).
+    ///
+    /// Note: child fan-out is *not* rate-limited yet — it bypasses the overlap /
+    /// concurrency gates that apply to scheduled/manual triggers (that lands with
+    /// the "rate-limited work queues" roadmap item).
+    fn spawn_child(
+        &self,
+        deployment: &str,
+        input: &Value,
+        parent_id: &str,
+        parent_seq: u32,
+        child_id: &str,
+        depth: i64,
+    ) -> bool {
+        const MAX_DEPTH: i64 = 8;
+        if depth > MAX_DEPTH {
+            self.emit_log(
+                parent_id,
+                "sdk",
+                &format!("child spawn refused: max nesting depth {MAX_DEPTH} exceeded"),
+            );
+            return false;
+        }
+        // Idempotent: an existing child_id (crash between spawn and journal) attaches.
+        if self.store.get_workflow(child_id).ok().flatten().is_some() {
+            return true;
+        }
+        let Some(dep) = self.store.get_deployment(deployment).ok().flatten() else {
+            self.emit_log(
+                parent_id,
+                "sdk",
+                &format!("child spawn failed: no such flow '{deployment}'"),
+            );
+            return false;
+        };
+        let version = version_of(&dep.cmd);
+        if self
+            .store
+            .create_workflow(
+                child_id,
+                &dep.name,
+                "child",
+                input,
+                &version,
+                Some((parent_id, parent_seq as i64)),
+            )
+            .is_err()
+        {
+            return false;
+        }
+        self.active.lock().unwrap().insert(dep.name.clone());
+        self.spawn_supervise(dep, child_id.to_string(), input.clone());
+        true
+    }
+
+    /// Route a finished child's result back to its parent as a `child:{id}` signal,
+    /// waking the parent if it's parked on a join.
+    fn notify_parent(&self, child_id: &str, status: &str, output: &Value) {
+        if let Ok(Some((parent_id, _))) = self.store.parent_of(child_id) {
+            let payload = json!({ "status": status, "output": output });
+            let _ = self
+                .store
+                .add_signal(&parent_id, &format!("child:{child_id}"), &payload);
+            self.notify_signal(&parent_id);
+        }
     }
 
     /// On daemon startup: resume any workflow left `running` by a previous life.
@@ -167,6 +236,20 @@ impl Worker {
         }
     }
 
+    /// Scheduler hook: re-dispatch signal-waiting workflows that already hold an
+    /// unconsumed signal. Closes the lost-wakeup race where `notify_signal` fired
+    /// while the workflow was still active (mid-resume) and so was dropped — the
+    /// common case being sibling children finishing during a fan-out join.
+    pub fn resume_signalled_waiters(&self) {
+        if let Ok(waiters) = self.store.list_waiting_with_signals() {
+            for wf in &waiters {
+                if !self.is_active(&wf.deployment) {
+                    self.resume(wf, "workflow_signalled");
+                }
+            }
+        }
+    }
+
     /// A signal arrived — if the workflow is parked waiting, wake it now.
     pub fn notify_signal(&self, workflow_id: &str) {
         if let Ok(Some(wf)) = self.store.get_workflow(workflow_id) {
@@ -201,29 +284,44 @@ impl Worker {
                 .await?;
 
             match res.terminal {
-                Some(Terminal::Success) => {
+                Some(Terminal::Success(output)) => {
                     self.store
-                        .finish_workflow(&workflow_id, "success", None, None)?;
+                        .finish_workflow(&workflow_id, "success", Some(&output), None)?;
+                    self.notify_parent(&workflow_id, "success", &output);
                     return Ok(());
                 }
-                Some(Terminal::Failure) => {
-                    self.store.finish_workflow(
-                        &workflow_id,
-                        "failed",
-                        None,
-                        Some("workflow reported failure"),
-                    )?;
+                Some(Terminal::Failure(err)) => {
+                    self.store
+                        .finish_workflow(&workflow_id, "failed", None, Some(&err))?;
+                    self.notify_parent(&workflow_id, "failed", &Value::Null);
                     return Ok(());
                 }
                 Some(Terminal::Parked(wake_at)) => {
                     // Unloaded; scheduler / signal will re-dispatch. Not finished.
                     self.store.park_workflow(&workflow_id, wake_at)?;
+                    // Low-latency close of the lost-wakeup race: if a signal (e.g. a
+                    // child completion) landed while we were running, re-execute now
+                    // instead of waiting for the scheduler's sweep. We still hold this
+                    // deployment's `active` slot, so no double-dispatch. Any signal
+                    // that races past this check is caught by resume_signalled_waiters.
+                    if wake_at.is_none()
+                        && self
+                            .store
+                            .unconsumed_signals(&workflow_id)
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                    {
+                        self.store.set_running(&workflow_id)?;
+                        continue;
+                    }
                     return Ok(());
                 }
                 None => {
                     if res.exit_ok {
+                        // Bare/exit-code child: no structured output to hand up.
                         self.store
                             .finish_workflow(&workflow_id, "success", None, None)?;
+                        self.notify_parent(&workflow_id, "success", &Value::Null);
                         return Ok(());
                     }
                     // Crash: re-dispatch up to `retries`.
@@ -243,6 +341,7 @@ impl Worker {
                     }
                     self.store
                         .finish_workflow(&workflow_id, "failed", None, Some("crashed"))?;
+                    self.notify_parent(&workflow_id, "failed", &Value::Null);
                     return Ok(());
                 }
             }
@@ -289,6 +388,9 @@ impl Worker {
         cmd.env("PYTHONPATH", joined);
         if let Value::Object(map) = input {
             for (k, v) in map {
+                if k.starts_with("__") {
+                    continue; // internal keys (e.g. __depth) aren't user params
+                }
                 let val = match v {
                     Value::String(s) => s.clone(),
                     other => other.to_string(),
@@ -354,6 +456,13 @@ impl Worker {
             return None;
         }
         let _ = wr.flush().await;
+
+        // This workflow's nesting depth (0 for a top-level run); children inherit +1.
+        let parent_depth = ctx
+            .input
+            .get("__depth")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
 
         let mut terminal: Option<Terminal> = None;
         let mut lines = BufReader::new(rd).lines();
@@ -425,6 +534,38 @@ impl Worker {
                         .unwrap_or((0, now_iso()));
                     self.broadcast(workflow_id, s, ts, "event", payload);
                     terminal = Some(Terminal::Parked(*wake_at));
+                    continue;
+                }
+                FlowMsg::SpawnChild {
+                    seq,
+                    deployment,
+                    input,
+                } => {
+                    // Deterministic child id → re-spawn on replay is idempotent.
+                    let child_id = format!("{workflow_id}.{seq}");
+                    let mut child_input = input.clone();
+                    if let Value::Object(m) = &mut child_input {
+                        m.insert("__depth".into(), json!(parent_depth + 1));
+                    }
+                    let spawned = self.spawn_child(
+                        deployment,
+                        &child_input,
+                        workflow_id,
+                        *seq,
+                        &child_id,
+                        parent_depth + 1,
+                    );
+                    // Journal the child id at this seq so the parent replays it.
+                    self.journal_step(
+                        workflow_id,
+                        *seq,
+                        &format!("spawn:{deployment}"),
+                        &json!({ "child_id": child_id, "spawned": spawned }),
+                        0,
+                    );
+                    if self.ack(&mut wr, *seq).await.is_err() {
+                        return terminal;
+                    }
                     continue;
                 }
                 _ => {}
@@ -534,8 +675,8 @@ impl Worker {
         self.broadcast(workflow_id, seq, ts, "event", payload);
 
         match msg {
-            FlowMsg::WorkflowSuccess { .. } => Some(Terminal::Success),
-            FlowMsg::WorkflowFailure { .. } => Some(Terminal::Failure),
+            FlowMsg::WorkflowSuccess { output } => Some(Terminal::Success(output.clone())),
+            FlowMsg::WorkflowFailure { error } => Some(Terminal::Failure(error.clone())),
             _ => None,
         }
     }

@@ -17,6 +17,9 @@ pub async fn run(worker: Worker) {
     loop {
         // Phase 4: re-dispatch timer-parked workflows whose wake time has come.
         worker.resume_due();
+        // Phase 5: re-dispatch signal-waiters holding a pending signal (child
+        // completions that raced the parent's active window).
+        worker.resume_signalled_waiters();
 
         let now = Local::now();
         let minute_key = format!("{}", now.format("%Y-%m-%dT%H:%M"));

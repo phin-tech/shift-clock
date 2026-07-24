@@ -48,3 +48,13 @@ concurrency = 1          # …at 1 at a time (Phase 4)
 name = "hello"
 cmd = ["bash", "flows/hello.sh"]
 params = { source = "manual" }   # bare command, no SDK; judged by exit code
+
+[[flow]]
+name = "scrape"
+cmd = ["python3", "flows/scrape.py"]   # leaf child workflow (spawned by fanout)
+retries = 1
+
+[[flow]]
+name = "fanout"
+cmd = ["python3", "flows/fanout.py"]   # spawns N `scrape` children, joins on all
+retries = 1

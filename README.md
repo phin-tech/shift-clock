@@ -14,7 +14,7 @@ Workflows are just commands — a `python` script, a `node` script, or a bare
 ```
                  clients (one HTTP/SSE API)
         ┌────────────┬─────────────┬──────────────┐
-       CLI       TUI dashboard   (web later)   (remote later)
+       CLI       TUI dashboard    web (/)      (remote later)
         └────────────┴─────────────┴──────────────┘
                           │ HTTP / SSE
                  ┌────────▼─────────┐
@@ -128,6 +128,35 @@ def charge(amount):
     return {"ok": True}
 ```
 
+## Child workflows (durable fan-out / fan-in)
+
+`spawn` forks another deployment as a **child workflow** — its own supervised
+process, retried and resumed independently. Join with `wait_all` (index order) or
+`as_completed` (arrival order). While waiting, the **parent parks** — zero
+processes held during the fan-out — and resumes from the journal on any crash;
+already-spawned children attach idempotently and finished ones return journaled
+results.
+
+```python
+from shift_clock import workflow, step, spawn, wait_all
+
+@workflow
+def main():
+    kids = [spawn("scrape", {"url": u}) for u in urls]   # N children, concurrent
+    results = wait_all(kids)                              # parent parks (0 procs)
+    return summarize(results)
+```
+
+- **Handles are durable "futures"** — `spawn` returns a `ChildHandle`; its
+  resolution is journaled, so `.result()` survives a crash. The child id is
+  deterministic (`{parent}.{seq}`), making re-spawn on replay a no-op.
+- **`wait_all`** drains every already-finished child per wake (parks once per
+  wave, not per child). **`as_completed`** yields in completion order and journals
+  that order so replay reproduces it (the deterministic escape hatch for
+  arrival-order logic).
+- A finished child is routed to its parent as a `child:{id}` signal; the run tree
+  is visible in the web dashboard.
+
 ## Durability: resume a broken workflow
 
 Each `@step` is assigned a deterministic sequence number and its result is
@@ -224,12 +253,14 @@ Durable execution — shipped (details in [`docs/durable-execution.md`](docs/dur
 - [x] **Idempotent** submit (`--id`)
 - [x] Code **version** guarding (refuse to resume changed code)
 - [x] **Exactly-once** transactional steps (`set_state`) + `query`
+- [x] **Child workflows** — durable fan-out/fan-in (`spawn` / `wait_all` / `as_completed`)
+- [x] Read-only **web dashboard** (served at `/`: run tree + live stream)
 - [x] Self-spawning daemon (tmux/herdr-style), `~/.config/shift-clock`
 - [x] CI + release-tag builds (mac/linux) + Homebrew tap
 
 Not yet:
 
-- [ ] Rate-limited work queues
+- [ ] Rate-limited work queues (child fan-out is not yet rate-limited)
 - [ ] `query` of a *running* workflow's live state (today: parked/persisted state)
 - [ ] Exactly-once across *external* systems (only same-DB writes today)
 - [ ] `HOMEBREW_TAP_TOKEN` secret so releases auto-bump the tap
