@@ -82,6 +82,8 @@ bundled `sdk/typescript/shift_clock.mjs` (TS).
 # …or run it in the FOREGROUND (attached to your terminal, Ctrl-C to stop):
 ./target/debug/shift-clock serve             # headless: streams scheduler/serve logs
 ./target/debug/shift-clock serve --attach    # daemon + dashboard in one process; q stops it
+./target/debug/shift-clock serve --addr 127.0.0.1:0   # RANDOM port; clients auto-discover
+./target/debug/shift-clock status            # (no --host) finds it via ~/.config/…/daemon.addr
 
 # …or, if you want it started at LOGIN and kept alive by the OS (macOS launchd):
 ./deploy/install.sh
@@ -240,6 +242,7 @@ exit code, stdout/stderr captured as logs.
 | SDK stance | **Optional.** A workflow is minimally just a command judged by exit code. |
 | Observability | **TUI dashboard** (Runs + Scheduled tabs) + CLI, both HTTP/SSE clients. |
 | Daemon lifecycle | **Self-spawning** (tmux/herdr-style): a client `setsid`-forks a detached `serve` if none is reachable. Transport stays HTTP (remote-ready) — the Unix socket Herdr needs is only for PTY FD-passing, which we don't do. |
+| Discovery | The daemon records its **resolved** listen addr to `daemon.addr` after binding; clients without `--host` read it (else default `:8080`). So `serve --addr 127.0.0.1:0` binds a **random port** and clients still find it. |
 
 ## Roadmap
 

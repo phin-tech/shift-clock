@@ -75,6 +75,11 @@ pub fn pid_file(port: &str) -> PathBuf {
 pub fn log_file(port: &str) -> PathBuf {
     config_dir().join(format!("daemon-{port}.log"))
 }
+/// The running daemon's resolved listen addr, for client discovery — so clients
+/// can find a daemon bound to a random port (`serve --addr 127.0.0.1:0`).
+pub fn daemon_addr_file() -> PathBuf {
+    config_dir().join("daemon.addr")
+}
 
 /// Write the bundled SDKs (always, to stay in sync with the binary) and a sample
 /// manifest + flow (only if no manifest exists yet). Returns the config dir.

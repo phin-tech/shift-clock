@@ -55,8 +55,8 @@ enum Cmd {
         /// Idempotency key: re-triggering with the same id returns the existing workflow.
         #[arg(long)]
         id: Option<String>,
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Send a signal to a (possibly parked) workflow.
     Signal {
@@ -64,31 +64,31 @@ enum Cmd {
         name: String,
         #[arg(default_value = "null")]
         payload: String,
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show a workflow's status and step journal.
     Show {
         workflow_id: String,
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Query a workflow's durable state (optionally one key).
     Query {
         workflow_id: String,
         key: Option<String>,
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show whether the background daemon is running.
     Status {
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Stop the background daemon.
     Stop {
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Run one flow once, in-process, with no daemon (live-streamed).
     Run {
@@ -102,31 +102,30 @@ enum Cmd {
     Workflows {
         #[arg(long, default_value = "50")]
         limit: i64,
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show (or follow) a workflow's logs/events.
     Logs {
         workflow_id: String,
         #[arg(short, long)]
         follow: bool,
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Launch the TUI dashboard against a running daemon.
     Dashboard {
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        host: String,
+        #[arg(long)]
+        host: Option<String>,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    const DEFAULT_HOST: &str = "127.0.0.1:8080";
     let cli = Cli::parse();
     match cli.cmd {
         // Bare `shift-clock` → open the dashboard (auto-spawns the daemon).
-        None => tui::run(DEFAULT_HOST).await,
+        None => tui::run(&daemon::resolve_host(None)).await,
         Some(Cmd::Init) => {
             let dir = paths::ensure_scaffold()?;
             println!("scaffolded {}", dir.display());
@@ -143,36 +142,44 @@ async fn main() -> Result<()> {
             params,
             id,
             host,
-        }) => cli::trigger(&host, &name, cli::parse_params(&params), id).await,
+        }) => {
+            let host = daemon::resolve_host(host);
+            cli::trigger(&host, &name, cli::parse_params(&params), id).await
+        }
         Some(Cmd::Signal {
             workflow_id,
             name,
             payload,
             host,
         }) => {
+            let host = daemon::resolve_host(host);
             let payload =
                 serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
             cli::signal(&host, &workflow_id, &name, payload).await
         }
-        Some(Cmd::Show { workflow_id, host }) => cli::show(&host, &workflow_id).await,
+        Some(Cmd::Show { workflow_id, host }) => {
+            cli::show(&daemon::resolve_host(host), &workflow_id).await
+        }
         Some(Cmd::Query {
             workflow_id,
             key,
             host,
-        }) => cli::query(&host, &workflow_id, key).await,
-        Some(Cmd::Status { host }) => daemon::status(&host).await,
-        Some(Cmd::Stop { host }) => daemon::stop(&host),
+        }) => cli::query(&daemon::resolve_host(host), &workflow_id, key).await,
+        Some(Cmd::Status { host }) => daemon::status(&daemon::resolve_host(host)).await,
+        Some(Cmd::Stop { host }) => daemon::stop(&daemon::resolve_host(host)),
         Some(Cmd::Run {
             name,
             flows,
             params,
         }) => cli::run_oneshot(&flows, &name, cli::parse_params(&params)).await,
-        Some(Cmd::Workflows { limit, host }) => cli::workflows(&host, limit).await,
+        Some(Cmd::Workflows { limit, host }) => {
+            cli::workflows(&daemon::resolve_host(host), limit).await
+        }
         Some(Cmd::Logs {
             workflow_id,
             follow,
             host,
-        }) => cli::logs(&host, &workflow_id, follow).await,
-        Some(Cmd::Dashboard { host }) => tui::run(&host).await,
+        }) => cli::logs(&daemon::resolve_host(host), &workflow_id, follow).await,
+        Some(Cmd::Dashboard { host }) => tui::run(&daemon::resolve_host(host)).await,
     }
 }

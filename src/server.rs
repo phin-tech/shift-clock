@@ -30,7 +30,6 @@ pub async fn serve(
     let flows_path =
         flows.unwrap_or_else(|| crate::paths::default_manifest().display().to_string());
 
-    crate::daemon::record_self(&addr); // so `shift-clock stop/status` can find us
     let store = Store::open(&db)?;
 
     // The manifest is one writer into the deployments table.
@@ -69,7 +68,16 @@ pub async fn serve(
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("[serve] control plane on http://{addr}");
+    // Resolve the *actual* bound addr (so `--addr 127.0.0.1:0` gets a real port),
+    // then record it: a pidfile keyed by the real port for stop/status, and the
+    // discovery file so clients without `--host` can find us.
+    let resolved = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| addr.clone());
+    crate::daemon::record_self(&resolved);
+    crate::daemon::record_addr(&resolved);
+    println!("[serve] control plane on http://{resolved}");
 
     if attach {
         // Foreground: run the daemon in-process AND the dashboard. Quitting the
@@ -79,13 +87,14 @@ pub async fn serve(
         });
         // Wait for the server to be ready so the TUI doesn't try to auto-spawn.
         for _ in 0..40 {
-            if crate::daemon::is_up(&addr).await {
+            if crate::daemon::is_up(&resolved).await {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        crate::tui::run(&addr).await?;
+        crate::tui::run(&resolved).await?;
         println!("[serve] dashboard closed — stopping foreground daemon");
+        crate::daemon::clear_addr();
         return Ok(());
     }
 
@@ -96,5 +105,6 @@ pub async fn serve(
             println!("\n[serve] shutting down");
         })
         .await?;
+    crate::daemon::clear_addr();
     Ok(())
 }

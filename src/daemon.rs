@@ -29,6 +29,36 @@ fn addr_of(host: &str) -> String {
         .to_string()
 }
 
+/// The addr clients fall back to when none is given and no daemon is recorded.
+pub const DEFAULT_HOST: &str = "127.0.0.1:8080";
+
+/// Resolve which daemon a client should talk to. An explicit `--host` always
+/// wins; otherwise use the addr a running daemon recorded (`daemon.addr`), which
+/// is how clients locate a daemon bound to a random port; otherwise the default.
+pub fn resolve_host(explicit: Option<String>) -> String {
+    if let Some(h) = explicit {
+        return h;
+    }
+    if let Ok(addr) = std::fs::read_to_string(crate::paths::daemon_addr_file()) {
+        let addr = addr.trim();
+        if !addr.is_empty() {
+            return addr.to_string();
+        }
+    }
+    DEFAULT_HOST.to_string()
+}
+
+/// Record the daemon's resolved listen addr for client discovery (called by
+/// `serve` once the real port is known — after binding, so `:0` resolves).
+pub fn record_addr(addr: &str) {
+    let _ = std::fs::write(crate::paths::daemon_addr_file(), addr);
+}
+
+/// Remove the discovery file (on daemon shutdown/stop).
+pub fn clear_addr() {
+    let _ = std::fs::remove_file(crate::paths::daemon_addr_file());
+}
+
 /// Only local daemons can be auto-spawned; a remote host must already be up.
 pub fn is_local(host: &str) -> bool {
     let hostname = addr_of(host);
@@ -140,6 +170,13 @@ pub fn stop(host: &str) -> Result<()> {
         libc::kill(pid, libc::SIGTERM);
     }
     let _ = std::fs::remove_file(&path);
+    // Clear the discovery file if it points at the daemon we just stopped.
+    if std::fs::read_to_string(crate::paths::daemon_addr_file())
+        .map(|a| addr_of(a.trim()) == addr_of(host))
+        .unwrap_or(false)
+    {
+        clear_addr();
+    }
     println!("stopped daemon (pid {pid})");
     Ok(())
 }
