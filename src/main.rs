@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         // Bare `shift-clock` → open the dashboard (auto-spawns the daemon).
-        None => tui::run(&daemon::resolve_host(None)).await,
+        None => tui::run(&daemon::resolve_host(None).await).await,
         Some(Cmd::Init) => {
             let dir = paths::ensure_scaffold()?;
             println!("scaffolded {}", dir.display());
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
             id,
             host,
         }) => {
-            let host = daemon::resolve_host(host);
+            let host = daemon::resolve_host(host).await;
             cli::trigger(&host, &name, cli::parse_params(&params), id).await
         }
         Some(Cmd::Signal {
@@ -152,34 +152,34 @@ async fn main() -> Result<()> {
             payload,
             host,
         }) => {
-            let host = daemon::resolve_host(host);
+            let host = daemon::resolve_host(host).await;
             let payload =
                 serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
             cli::signal(&host, &workflow_id, &name, payload).await
         }
         Some(Cmd::Show { workflow_id, host }) => {
-            cli::show(&daemon::resolve_host(host), &workflow_id).await
+            cli::show(&daemon::resolve_host(host).await, &workflow_id).await
         }
         Some(Cmd::Query {
             workflow_id,
             key,
             host,
-        }) => cli::query(&daemon::resolve_host(host), &workflow_id, key).await,
-        Some(Cmd::Status { host }) => daemon::status(&daemon::resolve_host(host)).await,
-        Some(Cmd::Stop { host }) => daemon::stop(&daemon::resolve_host(host)),
+        }) => cli::query(&daemon::resolve_host(host).await, &workflow_id, key).await,
+        Some(Cmd::Status { host }) => daemon::status(&daemon::resolve_host(host).await).await,
+        Some(Cmd::Stop { host }) => daemon::stop(&daemon::resolve_host(host).await),
         Some(Cmd::Run {
             name,
             flows,
             params,
         }) => cli::run_oneshot(&flows, &name, cli::parse_params(&params)).await,
         Some(Cmd::Workflows { limit, host }) => {
-            cli::workflows(&daemon::resolve_host(host), limit).await
+            cli::workflows(&daemon::resolve_host(host).await, limit).await
         }
         Some(Cmd::Logs {
             workflow_id,
             follow,
             host,
-        }) => cli::logs(&daemon::resolve_host(host), &workflow_id, follow).await,
-        Some(Cmd::Dashboard { host }) => tui::run(&daemon::resolve_host(host)).await,
+        }) => cli::logs(&daemon::resolve_host(host).await, &workflow_id, follow).await,
+        Some(Cmd::Dashboard { host }) => tui::run(&daemon::resolve_host(host).await).await,
     }
 }

@@ -33,16 +33,20 @@ fn addr_of(host: &str) -> String {
 pub const DEFAULT_HOST: &str = "127.0.0.1:8080";
 
 /// Resolve which daemon a client should talk to. An explicit `--host` always
-/// wins; otherwise use the addr a running daemon recorded (`daemon.addr`), which
-/// is how clients locate a daemon bound to a random port; otherwise the default.
-pub fn resolve_host(explicit: Option<String>) -> String {
+/// wins; otherwise use the addr a running daemon recorded (`daemon.addr`) — but
+/// only if something actually answers there, so a stale file (e.g. the daemon was
+/// `kill -9`'d without clearing it) is treated as absent. Falls back to the
+/// default. This is what lets clients locate a daemon bound to a random port.
+pub async fn resolve_host(explicit: Option<String>) -> String {
     if let Some(h) = explicit {
         return h;
     }
     if let Ok(addr) = std::fs::read_to_string(crate::paths::daemon_addr_file()) {
-        let addr = addr.trim();
-        if !addr.is_empty() {
-            return addr.to_string();
+        let addr = addr.trim().to_string();
+        // Health-check before trusting the file; a stale addr falls through to
+        // the default rather than sending every command at a dead port.
+        if !addr.is_empty() && health_ok(&addr).await {
+            return addr;
         }
     }
     DEFAULT_HOST.to_string()
